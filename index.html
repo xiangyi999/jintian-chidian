@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#FFF3D9">
+    <meta name="description" content="今日吃点，一个本地优先的治愈软萌每日菜单 PWA。">
+    <title>今日吃点</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-touch-icon" href="./assets/food-doodles.png">
+    <link rel="stylesheet" href="./src/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">本地菜单小本</p>
+          <h1>今日吃点</h1>
+        </div>
+        <button class="soft-icon-button" type="button" data-action="go-settings" aria-label="打开设置">设置</button>
+      </header>
+
+      <main id="app" class="content" aria-live="polite"></main>
+
+      <nav class="bottom-nav" aria-label="主要导航">
+        <button class="nav-item is-active" type="button" data-view="home">首页</button>
+        <button class="nav-item" type="button" data-view="library">菜谱</button>
+        <button class="nav-item nav-add" type="button" data-view="editor">添加</button>
+        <button class="nav-item" type="button" data-view="settings">设置</button>
+      </nav>
+    </div>
+
+    <template id="toast-template">
+      <div class="toast" role="status"></div>
+    </template>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
