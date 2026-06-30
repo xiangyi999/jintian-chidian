@@ -25,8 +25,14 @@ http://localhost:4173
 ## 测试
 
 ```bash
-node --test tests/*.test.mjs
+npm.cmd run check
 ```
+
+## 本地开发和同步 GitHub
+
+本项目采用功能分支流程：先在本地分支完成修改和测试，再推送到 GitHub，确认稳定后合并到 `main` 发布到手机端。
+
+详细流程见：[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)。
 
 ## 隐私说明
 
