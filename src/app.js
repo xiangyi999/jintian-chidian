@@ -14,7 +14,7 @@ import {
   pushCloudState,
   requestAiRecipe,
   updateDish,
-} from "./core.js?v=20260630-v8";
+} from "./core.js?v=20260630-v9";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 
@@ -899,7 +899,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js");
+    navigator.serviceWorker.register("./sw-v9.js");
   });
 }
 

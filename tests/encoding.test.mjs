@@ -8,6 +8,7 @@ const checkedFiles = [
   "manifest.webmanifest",
   "src/app.js",
   "src/core.js",
+  "sw-v9.js",
 ];
 
 const mojibakePattern = /浠|鑿|浜戠|绠€|銆|锛|�|閲嶆柊|闅忔満|杩斿洖|鍒楄〃|鍒犻櫎|鏍囩|缂栬緫|鍋氭硶|鍥剧墖/;
