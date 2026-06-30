@@ -6,32 +6,34 @@ import {
   filterDishes,
   getAllTags,
   hasCloudConfig,
+  normalizeSettings,
+  parseRecipeDetails,
   parseBackup,
   pickRandomDish,
   pullCloudState,
   pushCloudState,
   requestAiRecipe,
   updateDish,
-} from "./core.js";
+} from "./core.js?v=20260630-v8";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 
 const sampleDishes = [
   createDish({
     name: "番茄鸡蛋饭",
-    recipe: "番茄炒出汁水，倒入鸡蛋块，加一点生抽和糖，盖在热米饭上。",
+    recipe: "食材：番茄、鸡蛋、米饭\n步骤：1. 番茄炒出汁。2. 倒入鸡蛋块，加一点生抽和糖，盖在热米饭上。\n小贴士：喜欢酸甜可以多加一点番茄。",
     tags: ["方便下饭", "快手"],
     favorite: true,
   }, "2026-06-29T08:00:00.000Z"),
   createDish({
     name: "凉拌鸡丝面",
-    recipe: "鸡胸肉煮熟撕丝，面条过凉水，拌黄瓜丝、芝麻酱、生抽和一点醋。",
+    recipe: "食材：鸡胸肉、面条、黄瓜、芝麻酱\n步骤：1. 鸡胸肉煮熟撕丝。2. 面条过凉水。3. 拌黄瓜丝、芝麻酱、生抽和一点醋。",
     tags: ["凉爽的", "方便下饭"],
     favorite: true,
   }, "2026-06-29T08:05:00.000Z"),
   createDish({
     name: "牛奶布丁",
-    recipe: "牛奶加糖小火加热，放吉利丁搅匀，冷藏到凝固，吃前加一点水果。",
+    recipe: "食材：牛奶、糖、吉利丁、水果\n步骤：1. 牛奶加糖小火加热。2. 放吉利丁搅匀。3. 冷藏到凝固，吃前加一点水果。",
     tags: ["想吃甜的"],
     favorite: false,
   }, "2026-06-29T08:10:00.000Z"),
@@ -44,6 +46,9 @@ let selectedTags = [];
 let searchQuery = "";
 let favoriteOnly = false;
 let editingId = null;
+let detailId = null;
+let detailReturnView = "library";
+let editorReturnView = "home";
 let currentPick = state.dishes[0] || null;
 
 function loadState() {
@@ -69,15 +74,6 @@ function loadState() {
   }
 }
 
-function normalizeSettings(settings = {}) {
-  const next = { ...DEFAULT_SETTINGS, ...settings };
-  if (next.aiProvider === "openai" || /^gpt-/i.test(next.model || "")) {
-    next.aiProvider = "deepseek";
-    next.model = DEFAULT_SETTINGS.model;
-  }
-  return next;
-}
-
 function persist(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (options.sync) {
@@ -99,8 +95,18 @@ async function syncToCloudSilently() {
 }
 
 function setView(view, options = {}) {
+  const previousView = activeView;
   activeView = view;
   editingId = options.editingId || null;
+  detailId = options.detailId || detailId;
+  if (view === "detail") {
+    detailId = options.detailId || detailId || currentPick?.id || null;
+    detailReturnView = options.returnView || (previousView === "detail" ? detailReturnView : previousView);
+  }
+  if (view === "editor") {
+    editorReturnView = options.returnView || "home";
+  }
+  document.querySelector(".app-shell")?.classList.toggle("is-detail-view", view === "detail");
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === view);
   });
@@ -112,6 +118,7 @@ function render() {
   if (activeView === "library") renderLibrary();
   if (activeView === "editor") renderEditor();
   if (activeView === "settings") renderSettings();
+  if (activeView === "detail") renderDetail();
 }
 
 function renderHome() {
@@ -122,16 +129,15 @@ function renderHome() {
 
   app.innerHTML = `
     <section class="hero-panel">
-      <div class="hero-copy">
+      <div class="hero-copy hero-open-target" role="button" tabindex="0" data-action="view-current-pick" data-id="${escapeAttr(pick?.id || "")}">
         <p class="soft-label">今天想吃点什么？</p>
         <h2>${pick ? escapeHtml(pick.name) : "先记录一道喜欢的菜"}</h2>
-        <p>${pick ? escapeHtml(shortRecipe(pick.recipe)) : "把常吃的、想吃的都收进来，之后就交给随机按钮。"}
-        </p>
+        <p>${pick ? escapeHtml(shortRecipe(pick.recipe)) : "把常吃的、想吃的都收进来，之后就交给随机按钮。"}</p>
       </div>
-      <div class="doodle-frame">
+      <div class="doodle-frame hero-open-target" role="button" tabindex="0" data-action="view-current-pick" data-id="${escapeAttr(pick?.id || "")}">
         ${dishImage(pick, "今日推荐插画")}
       </div>
-      <div class="tag-row">${renderTags(pick?.tags || ["凉爽的", "快手"])}</div>
+      <div class="tag-row hero-open-target" role="button" tabindex="0" data-action="view-current-pick" data-id="${escapeAttr(pick?.id || "")}">${renderTags(pick?.tags || ["凉爽的", "快手"])}</div>
       <div class="action-row">
         <button class="primary-pill" type="button" data-action="random">随机一道</button>
         <button class="secondary-pill" type="button" data-action="ai-current">AI 推荐做法</button>
@@ -140,7 +146,7 @@ function renderHome() {
 
     <section class="section-block">
       <div class="section-heading">
-        <h3>按心情挑一下</h3>
+        <h3>按心情挑一个</h3>
         <button class="text-button" type="button" data-action="clear-tags">清空</button>
       </div>
       <div class="chip-cloud">
@@ -249,6 +255,120 @@ function renderEditor() {
   `;
 }
 
+function renderDetail() {
+  const dish = state.dishes.find((item) => item.id === detailId) || currentPick || state.dishes[0];
+  if (!dish) {
+    app.innerHTML = `<section class="empty-state"><img src="./assets/food-doodles.png" alt=""><p>这道菜暂时找不到了。</p></section>`;
+    return;
+  }
+
+  detailId = dish.id;
+  currentPick = dish;
+  const details = parseRecipeDetails(dish.recipe);
+  const tags = dish.tags?.length ? dish.tags : ["未加标签"];
+
+  app.innerHTML = `
+    <article class="recipe-detail-card">
+      <header class="recipe-detail-top">
+        <button class="round-icon-button" type="button" data-action="detail-back" aria-label="返回">‹</button>
+        <h2>${escapeHtml(dish.name)}</h2>
+        <div class="detail-tools">
+          <button class="round-icon-button" type="button" data-action="edit-dish" data-id="${escapeAttr(dish.id)}" aria-label="编辑">✎</button>
+          <details class="detail-more">
+            <summary aria-label="更多操作">⋯</summary>
+            <div>
+              <button type="button" data-action="delete-dish" data-id="${escapeAttr(dish.id)}">删除菜谱</button>
+            </div>
+          </details>
+        </div>
+      </header>
+
+      <button class="detail-hero-image" type="button" data-action="open-image" aria-label="查看大图">
+        ${dishImage(dish, `${dish.name} 图片`)}
+        <span class="detail-sticker" aria-hidden="true"></span>
+      </button>
+
+      <section class="detail-meta">
+        <div class="detail-tag-list">
+          ${tags.map((tag) => `<button class="tag-chip" type="button" data-action="detail-tag" data-tag="${escapeAttr(tag)}">${escapeHtml(tag)}</button>`).join("")}
+        </div>
+        <p>${estimateCookMeta(details.steps)} · ${syncStatusText()}</p>
+      </section>
+
+      <section class="detail-module">
+        <div class="detail-module-title">
+          <span class="module-mark">01</span>
+          <h3>食材清单</h3>
+        </div>
+        ${renderIngredientList(details.ingredients)}
+      </section>
+
+      <section class="detail-module">
+        <div class="detail-module-title">
+          <span class="module-mark">02</span>
+          <h3>制作步骤</h3>
+        </div>
+        ${renderStepList(details.steps)}
+      </section>
+
+      ${details.tips ? `
+        <section class="detail-module detail-tips">
+          <div class="detail-module-title">
+            <span class="module-mark">03</span>
+            <h3>灏忚创澹?/h3>
+          </div>
+          <p>${escapeHtml(details.tips)}</p>
+        </section>
+      ` : ""}
+    </article>
+
+    <div class="detail-bottom-bar">
+      <button class="primary-pill" type="button" data-action="detail-random">重新随机</button>
+      <button class="secondary-pill" type="button" data-action="detail-list">返回列表</button>
+    </div>
+
+    <div class="image-lightbox" hidden data-lightbox>
+      <button type="button" data-action="close-image" aria-label="鍏抽棴澶у浘">脳</button>
+      ${dishImage(dish, `${dish.name} 澶у浘`)}
+    </div>
+  `;
+}
+
+function renderIngredientList(ingredients = []) {
+  if (!ingredients.length) {
+    return `<p class="muted">还没有单独写食材，可以在编辑里补上“食材：鸡蛋、番茄、米饭”。</p>`;
+  }
+
+  return `<ul class="ingredient-list">${ingredients.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderStepList(steps = []) {
+  if (!steps.length) {
+    return `<p class="muted">还没有写做法，可以先用 AI 补一版。</p>`;
+  }
+
+  return `<ol class="step-list">${steps.map((step, index) => `
+    <li>
+      <span>${index + 1}</span>
+      <p>${escapeHtml(step)}</p>
+    </li>
+  `).join("")}</ol>`;
+}
+
+function estimateCookMeta(steps = []) {
+  const stepCount = Math.max(1, steps.length || 1);
+  const minutes = Math.min(60, Math.max(10, stepCount * 5));
+  const difficulty = stepCount <= 3 ? "简单" : stepCount <= 6 ? "适中" : "费时";
+  return `约 ${minutes} 分钟 · ${difficulty}`;
+}
+
+function syncStatusText() {
+  if (state.settings.cloudSyncEnabled && hasCloudConfig(state.settings)) {
+    return navigator.onLine ? "已同步至云端" : "联网后自动同步";
+  }
+  return "仅保存在本机";
+}
+
 function renderSettings() {
   const cloudReady = hasCloudConfig(state.settings);
   app.innerHTML = `
@@ -326,7 +446,7 @@ function renderDishCards(dishes) {
   }
 
   return dishes.map((dish) => `
-    <article class="dish-card">
+    <article class="dish-card" role="button" tabindex="0" data-action="view-dish" data-id="${escapeAttr(dish.id)}">
       <div class="thumb">${dishImage(dish, `${dish.name} 图片`)}</div>
       <div class="dish-info">
         <div class="dish-title-row">
@@ -350,7 +470,7 @@ function renderDishRows(dishes, emptyText) {
   }
 
   return `<div class="row-list">${dishes.map((dish) => `
-    <button class="dish-row" type="button" data-action="edit-dish" data-id="${escapeAttr(dish.id)}">
+    <button class="dish-row" type="button" data-action="view-dish" data-id="${escapeAttr(dish.id)}">
       <span class="row-thumb">${dishImage(dish, "")}</span>
       <span><strong>${escapeHtml(dish.name)}</strong><small>${escapeHtml((dish.tags || []).join(" / ") || "未加标签")}</small></span>
     </button>
@@ -379,7 +499,7 @@ function toggleTag(tag) {
   render();
 }
 
-function randomPick() {
+function randomPick(options = {}) {
   const filters = { tags: selectedTags };
   if (state.settings.defaultRandomScope === "favorites") {
     filters.favoriteOnly = true;
@@ -389,7 +509,12 @@ function randomPick() {
     showToast("没有符合条件的菜，换个标签试试。");
     return;
   }
+  if (options.openDetail) {
+    setView("detail", { detailId: currentPick.id, returnView: "library" });
+    return;
+  }
   activeView = "home";
+  document.querySelector(".app-shell")?.classList.remove("is-detail-view");
   renderHome();
 }
 
@@ -446,6 +571,7 @@ function saveDishFromForm(form) {
     const index = state.dishes.findIndex((dish) => dish.id === editingId);
     state.dishes[index] = updateDish(state.dishes[index], input);
     currentPick = state.dishes[index];
+    detailId = state.dishes[index].id;
     showToast("这道菜已经更新。");
   } else {
     const dish = createDish(input);
@@ -455,7 +581,7 @@ function saveDishFromForm(form) {
   }
 
   persist({ sync: true });
-  setView("home");
+  setView(editingId && editorReturnView === "detail" ? "detail" : "home", { detailId });
 }
 
 function exportBackup() {
@@ -539,7 +665,7 @@ function escapeAttr(value) {
 }
 
 document.addEventListener("click", async (event) => {
-  const target = event.target.closest("button, label, [data-view]");
+  const target = event.target.closest("button, label, [data-view], [data-action]");
   if (!target) return;
 
   const view = target.dataset.view;
@@ -554,6 +680,25 @@ document.addEventListener("click", async (event) => {
 
   if (action === "go-settings") setView("settings");
   if (action === "random") randomPick();
+  if (action === "view-dish") setView("detail", { detailId: target.dataset.id, returnView: activeView });
+  if (action === "view-current-pick" && currentPick) {
+    setView("detail", { detailId: target.dataset.id || currentPick.id, returnView: "home" });
+  }
+  if (action === "detail-back") setView(detailReturnView || "library");
+  if (action === "detail-list") setView("library");
+  if (action === "detail-random") randomPick({ openDetail: true });
+  if (action === "detail-tag") {
+    selectedTags = [target.dataset.tag].filter(Boolean);
+    favoriteOnly = false;
+    searchQuery = "";
+    setView("library");
+  }
+  if (action === "open-image") {
+    document.querySelector("[data-lightbox]")?.removeAttribute("hidden");
+  }
+  if (action === "close-image") {
+    document.querySelector("[data-lightbox]")?.setAttribute("hidden", "");
+  }
   if (action === "clear-tags") {
     selectedTags = [];
     render();
@@ -563,7 +708,7 @@ document.addEventListener("click", async (event) => {
     favoriteOnly = !favoriteOnly;
     render();
   }
-  if (action === "edit-dish") setView("editor", { editingId: target.dataset.id });
+  if (action === "edit-dish") setView("editor", { editingId: target.dataset.id, returnView: activeView === "detail" ? "detail" : "home" });
   if (action === "toggle-favorite") {
     const dish = state.dishes.find((item) => item.id === target.dataset.id);
     dish.favorite = !dish.favorite;
@@ -572,10 +717,10 @@ document.addEventListener("click", async (event) => {
     render();
   }
   if (action === "delete-dish") {
-    if (confirm("确定删除这道菜吗？")) {
+    if (confirm("确定要删除这道菜谱吗？")) {
       state.dishes = state.dishes.filter((dish) => dish.id !== target.dataset.id);
       persist({ sync: true });
-      setView("library");
+      setView(activeView === "detail" ? (detailReturnView || "library") : "library");
     }
   }
   if (action === "ai-current" && currentPick) {
@@ -620,6 +765,18 @@ document.addEventListener("input", (event) => {
 document.addEventListener("change", (event) => {
   if (event.target.matches("[data-input='import']")) {
     importBackup(event.target.files?.[0]);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  const target = event.target.closest("[data-action='view-dish'], [data-action='view-current-pick']");
+  if (!target || (event.key !== "Enter" && event.key !== " ")) {
+    return;
+  }
+  event.preventDefault();
+  const detailTargetId = target.dataset.id || currentPick?.id;
+  if (detailTargetId) {
+    setView("detail", { detailId: detailTargetId, returnView: activeView });
   }
 });
 
@@ -698,6 +855,48 @@ async function pullCloudNow() {
   }
 }
 
+function latestDishTimestamp(dishes = []) {
+  return dishes.reduce((latest, dish) => {
+    const updatedAt = Date.parse(dish.updatedAt || dish.createdAt || "");
+    return Number.isFinite(updatedAt) ? Math.max(latest, updatedAt) : latest;
+  }, 0);
+}
+
+async function pullCloudOnStartup() {
+  if (!state.settings.cloudSyncEnabled || !hasCloudConfig(state.settings)) {
+    return;
+  }
+
+  try {
+    const cloudState = await pullCloudState({ settings: state.settings });
+    if (!cloudState) {
+      return;
+    }
+
+    const cloudSyncedAt = Date.parse(cloudState.syncedAt || "");
+    const localLatest = latestDishTimestamp(state.dishes);
+    if (Number.isFinite(cloudSyncedAt) && localLatest > cloudSyncedAt) {
+      return;
+    }
+
+    state.dishes = cloudState.dishes;
+    state.settings = {
+      ...state.settings,
+      ...cloudState.settings,
+      apiKey: state.settings.apiKey,
+      cloudUrl: state.settings.cloudUrl,
+      cloudAnonKey: state.settings.cloudAnonKey,
+      syncSpace: state.settings.syncSpace,
+      cloudSyncEnabled: state.settings.cloudSyncEnabled,
+    };
+    currentPick = state.dishes[0] || null;
+    persist();
+    render();
+  } catch (error) {
+    console.warn("Cloud startup sync skipped", error);
+  }
+}
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js");
@@ -705,3 +904,4 @@ if ("serviceWorker" in navigator) {
 }
 
 render();
+pullCloudOnStartup();

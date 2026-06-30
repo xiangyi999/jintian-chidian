@@ -6,13 +6,40 @@ export const DEFAULT_SETTINGS = {
   apiKey: "",
   aiProvider: "deepseek",
   model: "deepseek-v4-flash",
-  cloudUrl: "",
-  cloudAnonKey: "",
-  syncSpace: "default-menu",
-  cloudSyncEnabled: false,
+  cloudUrl: "https://kchquzndyxfaldfxyzfn.supabase.co",
+  cloudAnonKey: "sb_publishable_V3tGdQCaPO9B46SpkWSMmg_GjtVras_",
+  syncSpace: "home-menu-2026",
+  cloudSyncEnabled: true,
   defaultRandomScope: "all",
   theme: "cream-dessert",
 };
+
+export function normalizeSettings(settings = {}) {
+  const hadBlankCloudSetting = !String(settings.cloudUrl || "").trim()
+    || !String(settings.cloudAnonKey || "").trim()
+    || !String(settings.syncSpace || "").trim();
+  const next = { ...DEFAULT_SETTINGS, ...settings };
+
+  if (next.aiProvider === "openai" || /^gpt-/i.test(next.model || "")) {
+    next.aiProvider = "deepseek";
+    next.model = DEFAULT_SETTINGS.model;
+  }
+
+  if (!String(next.cloudUrl || "").trim()) {
+    next.cloudUrl = DEFAULT_SETTINGS.cloudUrl;
+  }
+  if (!String(next.cloudAnonKey || "").trim()) {
+    next.cloudAnonKey = DEFAULT_SETTINGS.cloudAnonKey;
+  }
+  if (!String(next.syncSpace || "").trim()) {
+    next.syncSpace = DEFAULT_SETTINGS.syncSpace;
+  }
+  if (hadBlankCloudSetting) {
+    next.cloudSyncEnabled = DEFAULT_SETTINGS.cloudSyncEnabled;
+  }
+
+  return next;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -143,6 +170,83 @@ export function buildRecipePrompt({ dishName, tags = [] } = {}) {
     "请用中文回答，结构包含：食材建议、简短做法、适合标签。",
     "语气温柔清楚，步骤不要太长，适合手机上快速阅读。",
   ].join("\n");
+}
+
+export function parseRecipeDetails(recipe = "") {
+  const rawText = String(recipe || "").trim();
+  const details = {
+    summary: rawText,
+    ingredients: [],
+    steps: [],
+    tips: "",
+  };
+
+  if (!rawText) {
+    return details;
+  }
+
+  const lines = rawText
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let section = "steps";
+  const stepLines = [];
+  const tipLines = [];
+
+  for (const line of lines) {
+    const match = line.match(/^(食材|材料|食材建议|主料|辅料|调料|步骤|制作步骤|做法|简短做法|小贴士|贴士|备注|建议)[:：]?\s*(.*)$/);
+    if (match) {
+      const heading = match[1];
+      const rest = match[2].trim();
+      if (/食材|材料|主料|辅料|调料/.test(heading)) {
+        section = "ingredients";
+        details.ingredients.push(...splitIngredientText(rest));
+        continue;
+      }
+      if (/步骤|做法/.test(heading)) {
+        section = "steps";
+        if (rest) stepLines.push(rest);
+        continue;
+      }
+      section = "tips";
+      if (rest) tipLines.push(rest);
+      continue;
+    }
+
+    if (section === "ingredients") {
+      details.ingredients.push(...splitIngredientText(line));
+    } else if (section === "tips") {
+      tipLines.push(line);
+    } else {
+      stepLines.push(line);
+    }
+  }
+
+  details.ingredients = [...new Set(details.ingredients)];
+  details.steps = normalizeStepText(stepLines.join("\n"));
+  details.tips = tipLines.join("\n").trim();
+
+  if (!details.steps.length && rawText) {
+    details.steps = normalizeStepText(rawText);
+  }
+
+  return details;
+}
+
+function splitIngredientText(text = "") {
+  return String(text || "")
+    .replace(/适合标签.*$/u, "")
+    .split(/[、，,；;\n]+/)
+    .map((item) => item.replace(/^\d+[.、]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function normalizeStepText(text = "") {
+  return String(text || "")
+    .split(/\r?\n+|(?<=。)|(?<=！)|(?<=!)/u)
+    .flatMap((line) => line.split(/(?=\d+[.、]\s*)/))
+    .map((item) => item.replace(/^\d+[.、]\s*/, "").trim())
+    .filter(Boolean);
 }
 
 export async function requestAiRecipe({ apiKey, model = DEFAULT_SETTINGS.model, dishName, tags = [], fetchImpl = fetch }) {
