@@ -1,11 +1,12 @@
-const CACHE_NAME = "jintian-chidian-v2";
+const CACHE_NAME = "jintian-chidian-v8";
 const ASSETS = [
   "./",
   "./index.html",
+  "./refresh.html",
   "./manifest.webmanifest",
-  "./src/app.js",
-  "./src/core.js",
-  "./src/styles.css",
+  "./src/app.js?v=20260630-v8",
+  "./src/core.js?v=20260630-v8",
+  "./src/styles.css?v=20260630-v8",
   "./assets/food-doodles.png"
 ];
 

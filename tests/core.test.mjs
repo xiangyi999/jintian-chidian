@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_SETTINGS,
   createDish,
   filterDishes,
   pickRandomDish,
   buildBackup,
   parseBackup,
   buildRecipePrompt,
+  normalizeSettings,
+  parseRecipeDetails,
   requestAiRecipe,
   hasCloudConfig,
   pushCloudState,
@@ -100,6 +103,27 @@ test("buildRecipePrompt includes dish name and selected tags", () => {
   assert.match(prompt, /简短做法/);
 });
 
+test("parseRecipeDetails extracts ingredients, steps, and tips from recipe text", () => {
+  const details = parseRecipeDetails(`
+食材：鸡蛋、番茄、米饭
+步骤：
+1. 番茄炒出汁。
+2. 倒入鸡蛋块，盖在米饭上。
+小贴士：喜欢酸甜可以多加一点番茄。
+  `);
+
+  assert.deepEqual(details.ingredients, ["鸡蛋", "番茄", "米饭"]);
+  assert.deepEqual(details.steps, ["番茄炒出汁。", "倒入鸡蛋块，盖在米饭上。"]);
+  assert.equal(details.tips, "喜欢酸甜可以多加一点番茄。");
+});
+
+test("parseRecipeDetails falls back to readable steps for plain recipe text", () => {
+  const details = parseRecipeDetails("先焯水。再拌酱汁。最后撒芝麻。");
+
+  assert.equal(details.ingredients.length, 0);
+  assert.deepEqual(details.steps, ["先焯水。", "再拌酱汁。", "最后撒芝麻。"]);
+});
+
 test("requestAiRecipe calls DeepSeek chat completions and extracts content", async () => {
   const calls = [];
   const text = await requestAiRecipe({
@@ -136,6 +160,32 @@ test("hasCloudConfig requires Supabase url, anon key, and sync space", () => {
     cloudAnonKey: "anon",
     syncSpace: "home",
   }), true);
+});
+
+test("default settings point to the shared Supabase space", () => {
+  assert.equal(DEFAULT_SETTINGS.cloudUrl, "https://kchquzndyxfaldfxyzfn.supabase.co");
+  assert.equal(DEFAULT_SETTINGS.cloudAnonKey, "sb_publishable_V3tGdQCaPO9B46SpkWSMmg_GjtVras_");
+  assert.equal(DEFAULT_SETTINGS.syncSpace, "home-menu-2026");
+  assert.equal(DEFAULT_SETTINGS.cloudSyncEnabled, true);
+  assert.equal(hasCloudConfig(DEFAULT_SETTINGS), true);
+});
+
+test("normalizeSettings fills blank legacy cloud settings from defaults", () => {
+  const settings = normalizeSettings({
+    aiProvider: "openai",
+    model: "gpt-4o-mini",
+    cloudUrl: "",
+    cloudAnonKey: "",
+    syncSpace: "",
+    cloudSyncEnabled: false,
+  });
+
+  assert.equal(settings.aiProvider, "deepseek");
+  assert.equal(settings.model, DEFAULT_SETTINGS.model);
+  assert.equal(settings.cloudUrl, DEFAULT_SETTINGS.cloudUrl);
+  assert.equal(settings.cloudAnonKey, DEFAULT_SETTINGS.cloudAnonKey);
+  assert.equal(settings.syncSpace, DEFAULT_SETTINGS.syncSpace);
+  assert.equal(settings.cloudSyncEnabled, true);
 });
 
 test("pushCloudState upserts one shared Supabase row", async () => {
