@@ -34,6 +34,12 @@ npm.cmd run check
 
 详细流程见：[docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)。
 
+## 云同步和 DeepSeek
+
+跨手机数据互通使用 Supabase，AI 做法推荐使用 DeepSeek。密钥只保存在手机浏览器本地，不写入 GitHub。
+
+配置说明见：[docs/CLOUD_SYNC_AND_DEEPSEEK.md](docs/CLOUD_SYNC_AND_DEEPSEEK.md)。
+
 ## 隐私说明
 
 菜谱和 API Key 默认只保存在当前浏览器本机。只有点击 AI 推荐时，菜名和标签会发送给 OpenAI API。

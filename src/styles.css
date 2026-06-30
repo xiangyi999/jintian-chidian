@@ -520,10 +520,20 @@ p {
   font-weight: 800;
 }
 
-.nav-item.is-active,
-.nav-add {
+.nav-item.is-active {
   color: #64442f;
   background: var(--orange);
+}
+
+.compact-form {
+  margin: 12px 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.cloud-actions {
+  margin-top: 12px;
 }
 
 .toast {
