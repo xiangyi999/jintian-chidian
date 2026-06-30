@@ -4,8 +4,12 @@ export const DEFAULT_TAGS = ["凉爽的", "方便下饭", "快手", "清淡", "�
 
 export const DEFAULT_SETTINGS = {
   apiKey: "",
-  aiProvider: "openai",
-  model: "gpt-5.4-mini",
+  aiProvider: "deepseek",
+  model: "deepseek-v4-flash",
+  cloudUrl: "",
+  cloudAnonKey: "",
+  syncSpace: "default-menu",
+  cloudSyncEnabled: false,
   defaultRandomScope: "all",
   theme: "cream-dessert",
 };
@@ -97,6 +101,7 @@ export function buildBackup({ dishes = [], settings = {} } = {}, timestamp = now
       ...DEFAULT_SETTINGS,
       ...settings,
       apiKey: "",
+      cloudAnonKey: "",
     },
   };
 }
@@ -122,6 +127,7 @@ export function parseBackup(raw) {
       ...DEFAULT_SETTINGS,
       ...(parsed.settings || {}),
       apiKey: "",
+      cloudAnonKey: "",
     },
   };
 }
@@ -147,7 +153,7 @@ export async function requestAiRecipe({ apiKey, model = DEFAULT_SETTINGS.model, 
     throw new Error("请先填写菜名");
   }
 
-  const response = await fetchImpl("https://api.openai.com/v1/responses", {
+  const response = await fetchImpl("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -155,7 +161,13 @@ export async function requestAiRecipe({ apiKey, model = DEFAULT_SETTINGS.model, 
     },
     body: JSON.stringify({
       model,
-      input: buildRecipePrompt({ dishName, tags }),
+      messages: [
+        {
+          role: "user",
+          content: buildRecipePrompt({ dishName, tags }),
+        },
+      ],
+      stream: false,
     }),
   });
 
@@ -168,6 +180,11 @@ export async function requestAiRecipe({ apiKey, model = DEFAULT_SETTINGS.model, 
 }
 
 function extractResponseText(data) {
+  const choiceText = data?.choices?.[0]?.message?.content;
+  if (typeof choiceText === "string") {
+    return choiceText;
+  }
+
   if (typeof data.output_text === "string") {
     return data.output_text;
   }
@@ -181,4 +198,108 @@ function extractResponseText(data) {
     }
   }
   return parts.join("\n");
+}
+
+export function hasCloudConfig(settings = {}) {
+  return Boolean(
+    String(settings.cloudUrl || "").trim()
+    && String(settings.cloudAnonKey || "").trim()
+    && String(settings.syncSpace || "").trim()
+  );
+}
+
+export function sanitizeSettingsForCloud(settings = {}) {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    apiKey: "",
+    cloudAnonKey: "",
+  };
+}
+
+export function buildCloudPayload({ dishes = [], settings = {} } = {}, timestamp = nowIso()) {
+  return {
+    version: BACKUP_VERSION,
+    syncedAt: timestamp,
+    dishes,
+    settings: sanitizeSettingsForCloud(settings),
+  };
+}
+
+function normalizeCloudUrl(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
+}
+
+function encodeFilterValue(value) {
+  return encodeURIComponent(String(value || "").trim());
+}
+
+export async function pushCloudState({ settings = {}, dishes = [], fetchImpl = fetch } = {}) {
+  if (!hasCloudConfig(settings)) {
+    throw new Error("请先填写云同步配置");
+  }
+
+  const baseUrl = normalizeCloudUrl(settings.cloudUrl);
+  const row = {
+    id: String(settings.syncSpace).trim(),
+    payload: buildCloudPayload({ dishes, settings }),
+    updated_at: nowIso(),
+  };
+
+  const response = await fetchImpl(`${baseUrl}/rest/v1/menu_sync?on_conflict=id`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: settings.cloudAnonKey,
+      Authorization: `Bearer ${settings.cloudAnonKey}`,
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(row),
+  });
+
+  if (!response.ok) {
+    throw new Error("云端同步失败，请检查 Supabase 配置");
+  }
+
+  return row;
+}
+
+export async function pullCloudState({ settings = {}, fetchImpl = fetch } = {}) {
+  if (!hasCloudConfig(settings)) {
+    throw new Error("请先填写云同步配置");
+  }
+
+  const baseUrl = normalizeCloudUrl(settings.cloudUrl);
+  const space = encodeFilterValue(settings.syncSpace);
+  const response = await fetchImpl(`${baseUrl}/rest/v1/menu_sync?id=eq.${space}&select=payload,updated_at&limit=1`, {
+    method: "GET",
+    headers: {
+      apikey: settings.cloudAnonKey,
+      Authorization: `Bearer ${settings.cloudAnonKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("读取云端数据失败，请检查 Supabase 配置");
+  }
+
+  const rows = await response.json();
+  const payload = rows?.[0]?.payload;
+  if (!payload) {
+    return null;
+  }
+
+  return {
+    version: BACKUP_VERSION,
+    syncedAt: payload.syncedAt || "",
+    dishes: Array.isArray(payload.dishes)
+      ? payload.dishes.map((dish) => createDish(dish, dish.updatedAt || nowIso()))
+      : [],
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...(payload.settings || {}),
+      apiKey: "",
+      cloudAnonKey: "",
+    },
+  };
 }

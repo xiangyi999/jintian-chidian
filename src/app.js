@@ -5,8 +5,11 @@ import {
   createDish,
   filterDishes,
   getAllTags,
+  hasCloudConfig,
   parseBackup,
   pickRandomDish,
+  pullCloudState,
+  pushCloudState,
   requestAiRecipe,
   updateDish,
 } from "./core.js";
@@ -56,7 +59,7 @@ function loadState() {
     const parsed = JSON.parse(saved);
     return {
       dishes: Array.isArray(parsed.dishes) ? parsed.dishes : sampleDishes,
-      settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
+      settings: normalizeSettings(parsed.settings || {}),
     };
   } catch {
     return {
@@ -66,8 +69,33 @@ function loadState() {
   }
 }
 
-function persist() {
+function normalizeSettings(settings = {}) {
+  const next = { ...DEFAULT_SETTINGS, ...settings };
+  if (next.aiProvider === "openai" || /^gpt-/i.test(next.model || "")) {
+    next.aiProvider = "deepseek";
+    next.model = DEFAULT_SETTINGS.model;
+  }
+  return next;
+}
+
+function persist(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (options.sync) {
+    syncToCloudSilently();
+  }
+}
+
+async function syncToCloudSilently() {
+  if (!state.settings.cloudSyncEnabled || !hasCloudConfig(state.settings)) {
+    return;
+  }
+
+  try {
+    await pushCloudState(state);
+    showToast("已同步到云端。");
+  } catch (error) {
+    showToast(error.message || "云端同步失败。");
+  }
 }
 
 function setView(view, options = {}) {
@@ -222,6 +250,7 @@ function renderEditor() {
 }
 
 function renderSettings() {
+  const cloudReady = hasCloudConfig(state.settings);
   app.innerHTML = `
     <section class="page-title">
       <p class="soft-label">设置和备份</p>
@@ -229,12 +258,12 @@ function renderSettings() {
     </section>
     <form class="editor-form" data-form="settings">
       <label>
-        <span>OpenAI API Key</span>
+        <span>DeepSeek API Key</span>
         <input name="apiKey" type="password" value="${escapeAttr(state.settings.apiKey || "")}" placeholder="只保存在本机浏览器">
       </label>
       <label>
-        <span>AI 模型</span>
-        <input name="model" value="${escapeAttr(state.settings.model || DEFAULT_SETTINGS.model)}" placeholder="gpt-5.4-mini">
+        <span>DeepSeek 模型</span>
+        <input name="model" value="${escapeAttr(state.settings.model || DEFAULT_SETTINGS.model)}" placeholder="deepseek-v4-flash">
       </label>
       <label>
         <span>默认随机范围</span>
@@ -243,8 +272,36 @@ function renderSettings() {
           <option value="favorites" ${state.settings.defaultRandomScope === "favorites" ? "selected" : ""}>只从收藏</option>
         </select>
       </label>
-      <button class="primary-pill" type="submit">保存设置</button>
+      <button class="primary-pill" type="submit">保存 DeepSeek 设置</button>
     </form>
+
+    <section class="section-block">
+      <div class="section-heading"><h3>云同步</h3><p>${cloudReady ? "已配置" : "未配置"}</p></div>
+      <form class="editor-form compact-form" data-form="cloud">
+        <label>
+          <span>Supabase URL</span>
+          <input name="cloudUrl" value="${escapeAttr(state.settings.cloudUrl || "")}" placeholder="https://xxxx.supabase.co">
+        </label>
+        <label>
+          <span>Supabase anon key</span>
+          <input name="cloudAnonKey" type="password" value="${escapeAttr(state.settings.cloudAnonKey || "")}" placeholder="只保存在本机浏览器">
+        </label>
+        <label>
+          <span>同步空间</span>
+          <input name="syncSpace" value="${escapeAttr(state.settings.syncSpace || DEFAULT_SETTINGS.syncSpace)}" placeholder="default-menu">
+        </label>
+        <label class="check-row">
+          <input name="cloudSyncEnabled" type="checkbox" ${state.settings.cloudSyncEnabled ? "checked" : ""}>
+          <span>保存菜谱后自动同步云端</span>
+        </label>
+        <button class="primary-pill" type="submit">保存云同步设置</button>
+      </form>
+      <div class="action-row cloud-actions">
+        <button class="secondary-pill" type="button" data-action="cloud-push">上传到云端</button>
+        <button class="secondary-pill" type="button" data-action="cloud-pull">从云端拉取</button>
+      </div>
+      <p class="hint">不同手机填写同一组 Supabase URL、anon key 和同步空间，就会看到同一份菜谱。</p>
+    </section>
 
     <section class="section-block">
       <div class="section-heading"><h3>备份</h3><p>${state.dishes.length} 道菜</p></div>
@@ -252,7 +309,7 @@ function renderSettings() {
         <button class="secondary-pill" type="button" data-action="export">导出备份</button>
         <label class="secondary-pill import-button">导入备份<input type="file" accept="application/json" data-input="import"></label>
       </div>
-      <p class="hint">导出的文件不包含 API Key，适合换设备或后续放进 git 仓库保管。</p>
+      <p class="hint">导出的文件不包含 DeepSeek Key 和云同步 anon key，适合换设备或后续放进 git 仓库保管。</p>
     </section>
 
     <section class="section-block danger-zone">
@@ -397,7 +454,7 @@ function saveDishFromForm(form) {
     showToast("已经收进菜谱。");
   }
 
-  persist();
+  persist({ sync: true });
   setView("home");
 }
 
@@ -425,8 +482,16 @@ async function importBackup(file) {
       const existingIds = new Set(state.dishes.map((dish) => dish.id));
       state.dishes = [...backup.dishes.filter((dish) => !existingIds.has(dish.id)), ...state.dishes];
     }
-    state.settings = { ...state.settings, ...backup.settings, apiKey: state.settings.apiKey };
-    persist();
+    state.settings = {
+      ...state.settings,
+      ...backup.settings,
+      apiKey: state.settings.apiKey,
+      cloudUrl: state.settings.cloudUrl,
+      cloudAnonKey: state.settings.cloudAnonKey,
+      syncSpace: state.settings.syncSpace,
+      cloudSyncEnabled: state.settings.cloudSyncEnabled,
+    };
+    persist({ sync: true });
     showToast("备份已经导入。");
     render();
   } catch (error) {
@@ -503,13 +568,13 @@ document.addEventListener("click", async (event) => {
     const dish = state.dishes.find((item) => item.id === target.dataset.id);
     dish.favorite = !dish.favorite;
     dish.updatedAt = new Date().toISOString();
-    persist();
+    persist({ sync: true });
     render();
   }
   if (action === "delete-dish") {
     if (confirm("确定删除这道菜吗？")) {
       state.dishes = state.dishes.filter((dish) => dish.id !== target.dataset.id);
-      persist();
+      persist({ sync: true });
       setView("library");
     }
   }
@@ -517,7 +582,7 @@ document.addEventListener("click", async (event) => {
     await runAiRecipe(currentPick.name, currentPick.tags, (text) => {
       currentPick.recipe = text;
       currentPick.updatedAt = new Date().toISOString();
-      persist();
+      persist({ sync: true });
       renderHome();
     });
   }
@@ -526,11 +591,13 @@ document.addEventListener("click", async (event) => {
     await runAiRecipe(dish.name, dish.tags, (text) => {
       dish.recipe = text;
       dish.updatedAt = new Date().toISOString();
-      persist();
+      persist({ sync: true });
       render();
     });
   }
   if (action === "ai-form") await fillAiRecipeForForm();
+  if (action === "cloud-push") await pushCloudNow();
+  if (action === "cloud-pull") await pullCloudNow();
   if (action === "export") exportBackup();
   if (action === "clear-data") {
     if (confirm("确定清空所有本地数据吗？这个操作不能撤销。")) {
@@ -572,13 +639,64 @@ document.addEventListener("submit", (event) => {
     state.settings = {
       ...state.settings,
       apiKey: form.elements.apiKey.value.trim(),
+      aiProvider: "deepseek",
       model: form.elements.model.value.trim() || DEFAULT_SETTINGS.model,
       defaultRandomScope: form.elements.defaultRandomScope.value,
     };
     persist();
-    showToast("设置已保存。");
+    showToast("DeepSeek 设置已保存。");
+  }
+
+  if (form.dataset.form === "cloud") {
+    state.settings = {
+      ...state.settings,
+      cloudUrl: form.elements.cloudUrl.value.trim(),
+      cloudAnonKey: form.elements.cloudAnonKey.value.trim(),
+      syncSpace: form.elements.syncSpace.value.trim() || DEFAULT_SETTINGS.syncSpace,
+      cloudSyncEnabled: form.elements.cloudSyncEnabled.checked,
+    };
+    persist();
+    showToast("云同步设置已保存。");
   }
 });
+
+async function pushCloudNow() {
+  try {
+    showToast("正在上传到云端。");
+    await pushCloudState(state);
+    showToast("云端已经更新。");
+  } catch (error) {
+    showToast(error.message || "上传云端失败。");
+  }
+}
+
+async function pullCloudNow() {
+  try {
+    showToast("正在读取云端菜谱。");
+    const cloudState = await pullCloudState({ settings: state.settings });
+    if (!cloudState) {
+      showToast("云端暂时还没有菜谱，先上传一次。");
+      return;
+    }
+
+    state.dishes = cloudState.dishes;
+    state.settings = {
+      ...state.settings,
+      ...cloudState.settings,
+      apiKey: state.settings.apiKey,
+      cloudUrl: state.settings.cloudUrl,
+      cloudAnonKey: state.settings.cloudAnonKey,
+      syncSpace: state.settings.syncSpace,
+      cloudSyncEnabled: state.settings.cloudSyncEnabled,
+    };
+    currentPick = state.dishes[0] || null;
+    persist();
+    showToast("已从云端更新本机菜谱。");
+    render();
+  } catch (error) {
+    showToast(error.message || "读取云端失败。");
+  }
+}
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

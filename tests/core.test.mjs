@@ -8,7 +8,11 @@ import {
   buildBackup,
   parseBackup,
   buildRecipePrompt,
-} from "../src/core.js";
+  requestAiRecipe,
+  hasCloudConfig,
+  pushCloudState,
+  pullCloudState,
+  } from "../src/core.js";
 
 test("createDish normalizes dish fields and timestamps", () => {
   const dish = createDish({
@@ -94,4 +98,89 @@ test("buildRecipePrompt includes dish name and selected tags", () => {
   assert.match(prompt, /凉拌鸡丝面/);
   assert.match(prompt, /凉爽的、方便下饭/);
   assert.match(prompt, /简短做法/);
+});
+
+test("requestAiRecipe calls DeepSeek chat completions and extracts content", async () => {
+  const calls = [];
+  const text = await requestAiRecipe({
+    apiKey: "deepseek-key",
+    model: "deepseek-v4-flash",
+    dishName: "番茄鸡蛋饭",
+    tags: ["方便下饭"],
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [
+            { message: { content: "食材建议：番茄、鸡蛋、米饭" } },
+          ],
+        }),
+      };
+    },
+  });
+
+  assert.equal(text, "食材建议：番茄、鸡蛋、米饭");
+  assert.equal(calls[0].url, "https://api.deepseek.com/chat/completions");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer deepseek-key");
+  assert.deepEqual(JSON.parse(calls[0].options.body).messages[0], {
+    role: "user",
+    content: buildRecipePrompt({ dishName: "番茄鸡蛋饭", tags: ["方便下饭"] }),
+  });
+});
+
+test("hasCloudConfig requires Supabase url, anon key, and sync space", () => {
+  assert.equal(hasCloudConfig({}), false);
+  assert.equal(hasCloudConfig({
+    cloudUrl: "https://demo.supabase.co",
+    cloudAnonKey: "anon",
+    syncSpace: "home",
+  }), true);
+});
+
+test("pushCloudState upserts one shared Supabase row", async () => {
+  const calls = [];
+  await pushCloudState({
+    settings: {
+      cloudUrl: "https://demo.supabase.co/",
+      cloudAnonKey: "anon",
+      syncSpace: "home-menu",
+    },
+    dishes: [createDish({ name: "A" }, "2026-06-29T12:00:00.000Z")],
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+
+  assert.equal(calls[0].url, "https://demo.supabase.co/rest/v1/menu_sync?on_conflict=id");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(calls[0].options.headers.apikey, "anon");
+  assert.match(calls[0].options.headers.Prefer, /resolution=merge-duplicates/);
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.id, "home-menu");
+  assert.equal(body.payload.dishes.length, 1);
+  assert.equal(body.payload.settings.cloudAnonKey, "");
+});
+
+test("pullCloudState reads the shared Supabase row", async () => {
+  const dish = createDish({ name: "云端菜" }, "2026-06-29T12:00:00.000Z");
+  const result = await pullCloudState({
+    settings: {
+      cloudUrl: "https://demo.supabase.co",
+      cloudAnonKey: "anon",
+      syncSpace: "home-menu",
+    },
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "https://demo.supabase.co/rest/v1/menu_sync?id=eq.home-menu&select=payload,updated_at&limit=1");
+      assert.equal(options.headers.Authorization, "Bearer anon");
+      return {
+        ok: true,
+        json: async () => [{ payload: { dishes: [dish], settings: { theme: "cream-dessert" } } }],
+      };
+    },
+  });
+
+  assert.equal(result.dishes[0].name, "云端菜");
+  assert.equal(result.settings.theme, "cream-dessert");
 });
