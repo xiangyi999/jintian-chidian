@@ -2,19 +2,27 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_TAGS,
   buildBackup,
+  buildShoppingList,
+  clearWeeklyMeal,
+  copyShoppingListText,
   createDish,
+  createEmptyShoppingState,
+  createEmptyWeeklyPlan,
   filterDishes,
   getAllTags,
   hasCloudConfig,
   normalizeSettings,
+  normalizeShoppingState,
+  normalizeWeeklyPlan,
   parseRecipeDetails,
   parseBackup,
   pickRandomDish,
   pullCloudState,
   pushCloudState,
   requestAiRecipe,
+  setWeeklyMeal,
   updateDish,
-} from "./core.js?v=20260630-v9";
+} from "./core.js?v=20260702-v5";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 
@@ -50,6 +58,34 @@ let detailId = null;
 let detailReturnView = "library";
 let editorReturnView = "home";
 let currentPick = state.dishes[0] || null;
+let mealPicker = {
+  open: false,
+  day: "",
+  meal: "",
+  tags: [],
+};
+
+const dayLabels = {
+  mon: "周一",
+  tue: "周二",
+  wed: "周三",
+  thu: "周四",
+  fri: "周五",
+  sat: "周六",
+  sun: "周日",
+};
+
+const mealLabels = {
+  breakfast: "早餐",
+  lunch: "午餐",
+  dinner: "晚餐",
+};
+
+const mealIcons = {
+  breakfast: "🌞",
+  lunch: "🌤️",
+  dinner: "🌙",
+};
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -57,6 +93,8 @@ function loadState() {
     return {
       dishes: sampleDishes,
       settings: { ...DEFAULT_SETTINGS },
+      weeklyPlan: createEmptyWeeklyPlan(),
+      shoppingState: createEmptyShoppingState(),
     };
   }
 
@@ -65,11 +103,15 @@ function loadState() {
     return {
       dishes: Array.isArray(parsed.dishes) ? parsed.dishes : sampleDishes,
       settings: normalizeSettings(parsed.settings || {}),
+      weeklyPlan: normalizeWeeklyPlan(parsed.weeklyPlan),
+      shoppingState: normalizeShoppingState(parsed.shoppingState),
     };
   } catch {
     return {
       dishes: sampleDishes,
       settings: { ...DEFAULT_SETTINGS },
+      weeklyPlan: createEmptyWeeklyPlan(),
+      shoppingState: createEmptyShoppingState(),
     };
   }
 }
@@ -95,6 +137,9 @@ async function syncToCloudSilently() {
 }
 
 function setView(view, options = {}) {
+  if (view === "settings") {
+    view = "my";
+  }
   const previousView = activeView;
   activeView = view;
   editingId = options.editingId || null;
@@ -107,6 +152,7 @@ function setView(view, options = {}) {
     editorReturnView = options.returnView || "home";
   }
   document.querySelector(".app-shell")?.classList.toggle("is-detail-view", view === "detail");
+  document.querySelector(".app-shell")?.classList.toggle("has-fixed-action", view === "weekly" || view === "shopping");
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === view);
   });
@@ -117,11 +163,13 @@ function render() {
   if (activeView === "home") renderHome();
   if (activeView === "library") renderLibrary();
   if (activeView === "editor") renderEditor();
-  if (activeView === "settings") renderSettings();
+  if (activeView === "my") renderMy();
   if (activeView === "detail") renderDetail();
+  if (activeView === "weekly") renderWeeklyPlan();
+  if (activeView === "shopping") renderShoppingList();
 }
 
-function renderHome() {
+function renderHomeLegacy() {
   const tags = [...new Set([...DEFAULT_TAGS, ...getAllTags(state.dishes)])].slice(0, 8);
   const recent = [...state.dishes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
   const favorites = state.dishes.filter((dish) => dish.favorite).slice(0, 3);
@@ -160,6 +208,13 @@ function renderHome() {
       <button type="button" data-view="editor">
         <span>记录新菜</span>
         <small>菜名、做法、图片都可以慢慢补</small>
+      </button>
+    </section>
+
+    <section class="weekly-entry">
+      <button type="button" data-view="weekly">
+        <span>📅 一周菜谱计划</span>
+        <small>提前排好早午晚餐，一键汇总采购清单</small>
       </button>
     </section>
 
@@ -355,6 +410,284 @@ function renderStepList(steps = []) {
   `).join("")}</ol>`;
 }
 
+function renderWeeklyPlanLegacy() {
+  state.weeklyPlan = normalizeWeeklyPlan(state.weeklyPlan);
+  app.innerHTML = `
+    <section class="page-title weekly-title">
+      <div>
+        <p class="soft-label">提前规划三餐，一键汇总食材</p>
+        <h2>📅 我的一周菜谱</h2>
+      </div>
+      <button class="text-button" type="button" data-action="reset-weekly-plan">重置本周计划</button>
+    </section>
+
+    <section class="weekly-board">
+      ${Object.entries(dayLabels).map(([day, label]) => renderDayCard(day, label)).join("")}
+    </section>
+
+    <div class="fixed-action-bar">
+      <button class="primary-pill" type="button" data-action="open-shopping-list">🛒 生成本周食材采购清单</button>
+    </div>
+
+    ${mealPicker.open ? renderMealPicker() : ""}
+  `;
+}
+
+function renderDayCard(day, label) {
+  return `
+    <article class="day-card">
+      <h3>${label}</h3>
+      <div class="meal-list">
+        ${Object.entries(mealLabels).map(([meal, mealLabel]) => renderMealRow(day, meal, mealLabel)).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderMealRowLegacy(day, meal, mealLabel) {
+  const dishId = state.weeklyPlan?.slots?.[day]?.[meal] || "";
+  const dish = state.dishes.find((item) => item.id === dishId);
+  return `
+    <button class="meal-row" type="button" data-action="open-meal-picker" data-day="${day}" data-meal="${meal}">
+      <span class="meal-label">${mealIcons[meal]} ${mealLabel}</span>
+      ${dish ? `
+        <span class="meal-dish">
+          <span class="meal-thumb">${dishImage(dish, "")}</span>
+          <strong>${escapeHtml(dish.name)}</strong>
+        </span>
+      ` : `<span class="meal-empty">点击选择菜谱</span>`}
+    </button>
+  `;
+}
+
+function renderMealPickerLegacy() {
+  const tags = [...new Set([...DEFAULT_TAGS, ...getAllTags(state.dishes)])];
+  const filteredDishes = filterDishes(state.dishes, { tags: mealPicker.tags })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const currentDishId = state.weeklyPlan?.slots?.[mealPicker.day]?.[mealPicker.meal] || "";
+  const title = `${dayLabels[mealPicker.day] || ""} · ${mealLabels[mealPicker.meal] || ""}`;
+
+  return `
+    <div class="sheet-backdrop" data-action="close-meal-picker"></div>
+    <section class="meal-picker-sheet" role="dialog" aria-modal="true" aria-label="选择菜谱">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title">
+        <div>
+          <p class="soft-label">选择菜谱</p>
+          <h3>${escapeHtml(title)}</h3>
+        </div>
+        <button class="round-icon-button" type="button" data-action="close-meal-picker" aria-label="关闭">×</button>
+      </div>
+      <div class="filter-line meal-picker-tags">
+        ${tags.map((tag) => `
+          <button class="tag-chip ${mealPicker.tags.includes(tag) ? "is-selected" : ""}" type="button" data-action="toggle-picker-tag" data-tag="${escapeAttr(tag)}">${escapeHtml(tag)}</button>
+        `).join("")}
+      </div>
+      <div class="picker-dish-list">
+        ${filteredDishes.length ? filteredDishes.map((dish) => `
+          <button class="picker-dish ${dish.id === currentDishId ? "is-selected" : ""}" type="button" data-action="select-meal-dish" data-id="${escapeAttr(dish.id)}">
+            <span class="row-thumb">${dishImage(dish, "")}</span>
+            <span><strong>${escapeHtml(dish.name)}</strong><small>${escapeHtml((dish.tags || []).join(" / ") || "未加标签")}</small></span>
+          </button>
+        `).join("") : `<p class="muted">还没有符合标签的菜谱。</p>`}
+      </div>
+      <div class="sheet-actions">
+        <button class="secondary-pill" type="button" data-action="clear-meal-slot">清空这个餐位</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderShoppingListLegacy() {
+  const list = buildShoppingList({
+    weeklyPlan: state.weeklyPlan,
+    dishes: state.dishes,
+    shoppingState: state.shoppingState,
+  });
+
+  app.innerHTML = `
+    <section class="page-title shopping-title">
+      <button class="round-icon-button" type="button" data-view="weekly" aria-label="返回">‹</button>
+      <div>
+        <p class="soft-label">已汇总本周全部早/中/晚餐食材</p>
+        <h2>本周食材采购清单</h2>
+      </div>
+    </section>
+
+    <section class="shopping-list">
+      ${list.length ? list.map(renderShoppingGroup).join("") : `
+        <div class="empty-state">
+          <img src="./assets/food-doodles.png" alt="">
+          <p>本周还没安排菜谱，先回去选几道想吃的。</p>
+        </div>
+      `}
+    </section>
+
+    <form class="custom-ingredient-form" data-form="custom-ingredient">
+      <h3>添加自定义食材</h3>
+      <input name="name" maxlength="24" placeholder="比如：葱姜">
+      <input name="quantity" maxlength="24" placeholder="数量：适量">
+      <select name="category">
+        <option value="蔬菜类">蔬菜类</option>
+        <option value="肉蛋禽类">肉蛋禽类</option>
+        <option value="主食干货">主食干货</option>
+        <option value="调料辅料" selected>调料辅料</option>
+      </select>
+      <button class="secondary-pill" type="submit">+ 添加自定义食材</button>
+    </form>
+
+    <div class="fixed-action-bar two-actions">
+      <button class="secondary-pill" type="button" data-view="weekly">返回计划</button>
+      <button class="primary-pill" type="button" data-action="copy-shopping-list">一键复制清单</button>
+    </div>
+  `;
+}
+
+function renderShoppingGroup(group) {
+  return `
+    <article class="shopping-card">
+      <h3>${escapeHtml(group.category)}</h3>
+      <div class="shopping-items">
+        ${group.items.map(renderShoppingItem).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderShoppingItem(item) {
+  return `
+    <div class="shopping-item ${item.checked ? "is-checked" : ""}">
+      <input class="shopping-check" type="checkbox" ${item.checked ? "checked" : ""} data-shopping-check="${escapeAttr(item.key)}">
+      <input class="shopping-name" value="${escapeAttr(item.name)}" data-shopping-field="name" data-key="${escapeAttr(item.key)}">
+      <input class="shopping-quantity" value="${escapeAttr(item.quantityText || "")}" data-shopping-field="quantity" data-key="${escapeAttr(item.key)}">
+      ${item.custom ? `<button class="text-button" type="button" data-action="delete-custom-item" data-id="${escapeAttr(item.id)}">删除</button>` : ""}
+    </div>
+  `;
+}
+
+function renderWeeklyPlan() {
+  state.weeklyPlan = normalizeWeeklyPlan(state.weeklyPlan);
+  app.innerHTML = `
+    <section class="page-title weekly-title">
+      <button class="round-icon-button" type="button" data-action="weekly-back-home" aria-label="返回首页">‹</button>
+      <div class="weekly-title-copy">
+        <p class="soft-label">提前规划三餐，一键汇总食材</p>
+        <h2>我的一周菜谱</h2>
+      </div>
+      <button class="text-button" type="button" data-action="reset-weekly-plan-v2">重置本周计划</button>
+    </section>
+
+    <section class="weekly-board">
+      ${Object.entries(dayLabels).map(([day, label]) => renderDayCard(day, label)).join("")}
+    </section>
+
+    <div class="fixed-action-bar">
+      <button class="primary-pill" type="button" data-action="open-shopping-list">生成本周食材采购清单</button>
+    </div>
+
+    ${mealPicker.open ? renderMealPicker() : ""}
+  `;
+}
+
+function renderMealRow(day, meal, mealLabel) {
+  const dishId = state.weeklyPlan?.slots?.[day]?.[meal] || "";
+  const dish = state.dishes.find((item) => item.id === dishId);
+  return `
+    <button class="meal-row" type="button" data-action="open-meal-picker" data-day="${day}" data-meal="${meal}">
+      <span class="meal-label">${mealIcons[meal]} ${mealLabel}</span>
+      ${dish ? `
+        <span class="meal-dish">
+          <span class="meal-thumb">${dishImage(dish, "")}</span>
+          <strong>${escapeHtml(dish.name)}</strong>
+          <em>已选</em>
+        </span>
+      ` : `<span class="meal-empty">点击选择菜谱</span>`}
+    </button>
+  `;
+}
+
+function renderMealPicker() {
+  const tags = [...new Set([...DEFAULT_TAGS, ...getAllTags(state.dishes)])];
+  const filteredDishes = filterDishes(state.dishes, { tags: mealPicker.tags })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const currentDishId = state.weeklyPlan?.slots?.[mealPicker.day]?.[mealPicker.meal] || "";
+  const title = `${dayLabels[mealPicker.day] || ""} · ${mealLabels[mealPicker.meal] || ""}`;
+
+  return `
+    <div class="sheet-backdrop" data-action="close-meal-picker"></div>
+    <section class="meal-picker-sheet" role="dialog" aria-modal="true" aria-label="选择菜谱">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title">
+        <div>
+          <p class="soft-label">选择菜谱</p>
+          <h3>${escapeHtml(title)}</h3>
+        </div>
+        <button class="round-icon-button" type="button" data-action="close-meal-picker" aria-label="关闭">×</button>
+      </div>
+      <div class="filter-line meal-picker-tags">
+        ${tags.map((tag) => `
+          <button class="tag-chip ${mealPicker.tags.includes(tag) ? "is-selected" : ""}" type="button" data-action="toggle-picker-tag" data-tag="${escapeAttr(tag)}">${escapeHtml(tag)}</button>
+        `).join("")}
+      </div>
+      <div class="picker-dish-list">
+        ${filteredDishes.length ? filteredDishes.map((dish) => `
+          <button class="picker-dish ${dish.id === currentDishId ? "is-selected" : ""}" type="button" data-action="select-meal-dish" data-id="${escapeAttr(dish.id)}">
+            <span class="row-thumb">${dishImage(dish, "")}</span>
+            <span><strong>${escapeHtml(dish.name)}</strong><small>${escapeHtml((dish.tags || []).join(" / ") || "未加标签")}</small></span>
+          </button>
+        `).join("") : `<p class="muted">还没有符合标签的菜谱。</p>`}
+      </div>
+      <div class="sheet-actions">
+        <button class="secondary-pill" type="button" data-action="clear-meal-slot">清空这个餐位</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderShoppingList() {
+  const list = buildShoppingList({
+    weeklyPlan: state.weeklyPlan,
+    dishes: state.dishes,
+    shoppingState: state.shoppingState,
+  });
+
+  app.innerHTML = `
+    <section class="page-title shopping-title">
+      <button class="round-icon-button" type="button" data-view="weekly" aria-label="返回">‹</button>
+      <div>
+        <h2>本周食材采购清单</h2>
+        <p class="soft-label">已汇总本周所有餐次的食材，可手动修改、补充、勾选已采购。</p>
+      </div>
+    </section>
+
+    <section class="shopping-list">
+      ${list.length ? list.map(renderShoppingGroup).join("") : `
+        <div class="empty-state">
+          <img src="./assets/food-doodles.png" alt="">
+          <p>本周还没安排菜谱，先回去选几道想吃的。</p>
+        </div>
+      `}
+    </section>
+
+    <form class="custom-ingredient-form" data-form="custom-ingredient">
+      <h3>添加自定义食材</h3>
+      <input name="name" maxlength="24" placeholder="比如：葱姜">
+      <input name="quantity" maxlength="24" placeholder="数量：适量">
+      <select name="category">
+        <option value="蔬菜类">蔬菜类</option>
+        <option value="肉蛋禽类">肉蛋禽类</option>
+        <option value="主食干货">主食干货</option>
+        <option value="调料辅料" selected>调料辅料</option>
+      </select>
+      <button class="secondary-pill" type="submit">+ 添加自定义食材</button>
+    </form>
+
+    <div class="fixed-action-bar">
+      <button class="primary-pill" type="button" data-action="copy-shopping-list">一键复制清单</button>
+    </div>
+  `;
+}
+
 function estimateCookMeta(steps = []) {
   const stepCount = Math.max(1, steps.length || 1);
   const minutes = Math.min(60, Math.max(10, stepCount * 5));
@@ -369,34 +702,34 @@ function syncStatusText() {
   return "仅保存在本机";
 }
 
-function renderSettings() {
+function renderMyLegacy() {
   const cloudReady = hasCloudConfig(state.settings);
   app.innerHTML = `
-    <section class="page-title">
-      <p class="soft-label">设置和备份</p>
-      <h2>把小菜单好好收着</h2>
+    <section class="page-title my-title">
+      <p class="soft-label">我的菜单小本</p>
+      <h2>我的</h2>
     </section>
-    <form class="editor-form" data-form="settings">
-      <label>
-        <span>DeepSeek API Key</span>
-        <input name="apiKey" type="password" value="${escapeAttr(state.settings.apiKey || "")}" placeholder="只保存在本机浏览器">
-      </label>
-      <label>
-        <span>DeepSeek 模型</span>
-        <input name="model" value="${escapeAttr(state.settings.model || DEFAULT_SETTINGS.model)}" placeholder="deepseek-v4-flash">
-      </label>
-      <label>
-        <span>默认随机范围</span>
-        <select name="defaultRandomScope">
-          <option value="all" ${state.settings.defaultRandomScope === "all" ? "selected" : ""}>全部菜谱</option>
-          <option value="favorites" ${state.settings.defaultRandomScope === "favorites" ? "selected" : ""}>只从收藏</option>
-        </select>
-      </label>
-      <button class="primary-pill" type="submit">保存 DeepSeek 设置</button>
-    </form>
 
-    <section class="section-block">
-      <div class="section-heading"><h3>云同步</h3><p>${cloudReady ? "已配置" : "未配置"}</p></div>
+    <section class="section-block my-card">
+      <div class="section-heading"><h3>⚙️ 设置与偏好</h3><p>${cloudReady ? "云同步已配置" : "云同步未配置"}</p></div>
+      <form class="editor-form compact-form" data-form="settings">
+        <label>
+          <span>DeepSeek API Key</span>
+          <input name="apiKey" type="password" value="${escapeAttr(state.settings.apiKey || "")}" placeholder="只保存在本机浏览器">
+        </label>
+        <label>
+          <span>DeepSeek 模型</span>
+          <input name="model" value="${escapeAttr(state.settings.model || DEFAULT_SETTINGS.model)}" placeholder="deepseek-v4-flash">
+        </label>
+        <label>
+          <span>默认随机范围</span>
+          <select name="defaultRandomScope">
+            <option value="all" ${state.settings.defaultRandomScope === "all" ? "selected" : ""}>全部菜谱</option>
+            <option value="favorites" ${state.settings.defaultRandomScope === "favorites" ? "selected" : ""}>只从收藏</option>
+          </select>
+        </label>
+        <button class="primary-pill" type="submit">保存 DeepSeek 设置</button>
+      </form>
       <form class="editor-form compact-form" data-form="cloud">
         <label>
           <span>Supabase URL</span>
@@ -423,19 +756,218 @@ function renderSettings() {
       <p class="hint">不同手机填写同一组 Supabase URL、anon key 和同步空间，就会看到同一份菜谱。</p>
     </section>
 
-    <section class="section-block">
-      <div class="section-heading"><h3>备份</h3><p>${state.dishes.length} 道菜</p></div>
+    <section class="section-block my-card">
+      <div class="section-heading"><h3>📊 数据管理</h3><p>${state.dishes.length} 道菜</p></div>
       <div class="action-row">
         <button class="secondary-pill" type="button" data-action="export">导出备份</button>
         <label class="secondary-pill import-button">导入备份<input type="file" accept="application/json" data-input="import"></label>
       </div>
       <p class="hint">导出的文件不包含 DeepSeek Key 和云同步 anon key，适合换设备或后续放进 git 仓库保管。</p>
+      <div class="my-danger-row">
+        <button class="danger-pill" type="button" data-action="clear-data">清空本地数据</button>
+      </div>
     </section>
 
-    <section class="section-block danger-zone">
-      <h3>清空本地数据</h3>
-      <p>只会清空这台设备浏览器里的菜谱和设置。</p>
-      <button class="danger-pill" type="button" data-action="clear-data">清空数据</button>
+    <section class="section-block my-card">
+      <div class="section-heading"><h3>❓ 帮助与反馈</h3><p>轻量说明</p></div>
+      <p class="hint">菜谱、周计划和采购清单会优先保存在本机；开启云同步后，同一同步空间下的手机会自动看到同一份数据。</p>
+      <p class="hint">如果页面没有更新，可以先打开刷新页清理缓存，再回到首页。</p>
+    </section>
+  `;
+}
+
+function renderHome() {
+  const tags = [...new Set([...DEFAULT_TAGS, ...getAllTags(state.dishes)])].slice(0, 8);
+  const recent = [...state.dishes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
+  const favorites = state.dishes.filter((dish) => dish.favorite).slice(0, 3);
+  const pick = currentPick || state.dishes[0] || null;
+
+  app.innerHTML = `
+    <section class="hero-panel home-hero-panel">
+      <div class="hero-copy hero-open-target" role="button" tabindex="0" data-action="view-current-pick" data-id="${escapeAttr(pick?.id || "")}">
+        <p class="soft-label">今天想吃点什么？</p>
+        <h2>${pick ? escapeHtml(pick.name) : "先记录一道喜欢的菜"}</h2>
+        <p>${pick ? escapeHtml(shortRecipe(pick.recipe)) : "把常吃的、想吃的都收进来，之后就交给随机按钮。"}</p>
+      </div>
+      <div class="doodle-frame hero-open-target" role="button" tabindex="0" data-action="view-current-pick" data-id="${escapeAttr(pick?.id || "")}">
+        ${dishImage(pick, "今日推荐插画")}
+      </div>
+      <div class="tag-row hero-open-target" role="button" tabindex="0" data-action="view-current-pick" data-id="${escapeAttr(pick?.id || "")}">
+        ${renderTags(pick?.tags || ["凉爽的", "方便下饭"])}
+      </div>
+
+      <div class="hero-divider"></div>
+
+      <div class="hero-filter">
+        <div class="section-heading">
+          <h3>按心情挑标签</h3>
+          <button class="text-button" type="button" data-action="clear-tags">清空</button>
+        </div>
+        <div class="chip-cloud">
+          ${tags.map((tag) => `
+            <button class="tag-chip ${selectedTags.includes(tag) ? "is-selected" : ""}" type="button" data-action="toggle-home-tag" data-tag="${escapeAttr(tag)}">${escapeHtml(tag)}</button>
+          `).join("")}
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button class="primary-pill" type="button" data-action="random">随机一道</button>
+        <button class="secondary-pill" type="button" data-action="ai-current">AI 推荐做法</button>
+      </div>
+    </section>
+
+    <section class="weekly-entry">
+      <button type="button" data-view="weekly">
+        <span>📅 一周菜谱计划</span>
+        <small>安排每日三餐｜一键汇总食材清单</small>
+      </button>
+    </section>
+
+    <section class="quick-add">
+      <button type="button" data-view="editor">
+        <span>记录新菜</span>
+        <small>菜名、做法、图片都可以慢慢补</small>
+      </button>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading"><h3>我的收藏</h3><button class="text-button" type="button" data-view="library" data-favorites="true">查看</button></div>
+      ${renderDishRows(favorites, "还没有收藏，遇到想吃的就点一下收藏。")}
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading"><h3>最近添加</h3><button class="text-button" type="button" data-view="library">全部</button></div>
+      ${renderDishRows(recent, "还没有菜谱，从记录第一道开始。")}
+    </section>
+  `;
+}
+
+function getMostUsedTag() {
+  const counts = new Map();
+  for (const tag of state.dishes.flatMap((dish) => dish.tags || [])) {
+    counts.set(tag, (counts.get(tag) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "还没有";
+}
+
+function getPlannedMealCount() {
+  return Object.values(state.weeklyPlan?.slots || {})
+    .flatMap((meals) => Object.values(meals || {}))
+    .filter(Boolean).length;
+}
+
+function renderMy() {
+  const cloudReady = hasCloudConfig(state.settings);
+  const favoriteCount = state.dishes.filter((dish) => dish.favorite).length;
+  const allTags = [...new Set([...DEFAULT_TAGS, ...getAllTags(state.dishes)])];
+
+  app.innerHTML = `
+    <section class="page-title my-title">
+      <p class="soft-label">我的菜单小本</p>
+      <h2>我的</h2>
+    </section>
+
+    <section class="my-section">
+      <p class="my-section-label">常用入口</p>
+      <button class="my-action-card" type="button" data-view="library" data-favorites="true">
+        <span>⭐ 我的收藏菜谱</span>
+        <small>查看你标记过的喜欢的菜</small>
+      </button>
+      <button class="my-action-card" type="button" data-view="weekly">
+        <span>📅 本周菜谱计划</span>
+        <small>查看/修改你的一周三餐安排</small>
+      </button>
+      <button class="my-action-card" type="button" data-view="shopping">
+        <span>🛒 我的采购清单</span>
+        <small>查看之前生成过的食材清单</small>
+      </button>
+    </section>
+
+    <section class="my-section">
+      <p class="my-section-label">数据与统计</p>
+      <article class="my-info-card">
+        <span>📊 我的做饭小统计</span>
+        <small>已收录菜谱：${state.dishes.length} 道 ｜ 收藏：${favoriteCount} 道 ｜ 本周已排：${getPlannedMealCount()} 餐 ｜ 最常用标签：${escapeHtml(getMostUsedTag())}</small>
+      </article>
+
+      <details class="my-panel-card">
+        <summary>
+          <span>💾 菜谱备份与恢复</span>
+          <small>导出/导入你的所有菜谱数据</small>
+        </summary>
+        <div class="action-row my-panel-actions">
+          <button class="secondary-pill" type="button" data-action="export">导出备份</button>
+          <label class="secondary-pill import-button">导入备份<input type="file" accept="application/json" data-input="import"></label>
+        </div>
+        <p class="hint">备份不包含 DeepSeek Key 和云同步 anon key，适合换设备或自己留档。</p>
+        <div class="my-danger-row">
+          <button class="danger-pill" type="button" data-action="clear-data">清空本地数据</button>
+        </div>
+      </details>
+    </section>
+
+    <section class="my-section">
+      <p class="my-section-label">设置与偏好</p>
+      <details class="my-panel-card">
+        <summary>
+          <span>⚙️ 设置与偏好</span>
+          <small>API 配置、云同步、随机范围</small>
+        </summary>
+        <form class="editor-form compact-form" data-form="settings">
+          <label>
+            <span>DeepSeek API Key</span>
+            <input name="apiKey" type="password" value="${escapeAttr(state.settings.apiKey || "")}" placeholder="只保存在本机浏览器">
+          </label>
+          <label>
+            <span>DeepSeek 模型</span>
+            <input name="model" value="${escapeAttr(state.settings.model || DEFAULT_SETTINGS.model)}" placeholder="deepseek-v4-flash">
+          </label>
+          <label>
+            <span>默认随机范围</span>
+            <select name="defaultRandomScope">
+              <option value="all" ${state.settings.defaultRandomScope === "all" ? "selected" : ""}>全部菜谱</option>
+              <option value="favorites" ${state.settings.defaultRandomScope === "favorites" ? "selected" : ""}>只从收藏</option>
+            </select>
+          </label>
+          <button class="primary-pill" type="submit">保存 DeepSeek 设置</button>
+        </form>
+
+        <form class="editor-form compact-form" data-form="cloud">
+          <label>
+            <span>Supabase URL</span>
+            <input name="cloudUrl" value="${escapeAttr(state.settings.cloudUrl || "")}" placeholder="https://xxxx.supabase.co">
+          </label>
+          <label>
+            <span>Supabase anon key</span>
+            <input name="cloudAnonKey" type="password" value="${escapeAttr(state.settings.cloudAnonKey || "")}" placeholder="只保存在本机浏览器">
+          </label>
+          <label>
+            <span>同步空间</span>
+            <input name="syncSpace" value="${escapeAttr(state.settings.syncSpace || DEFAULT_SETTINGS.syncSpace)}" placeholder="default-menu">
+          </label>
+          <label class="check-row">
+            <input name="cloudSyncEnabled" type="checkbox" ${state.settings.cloudSyncEnabled ? "checked" : ""}>
+            <span>保存菜谱后自动同步云端</span>
+          </label>
+          <button class="primary-pill" type="submit">保存云同步设置</button>
+        </form>
+        <div class="action-row cloud-actions">
+          <button class="secondary-pill" type="button" data-action="cloud-push">上传到云端</button>
+          <button class="secondary-pill" type="button" data-action="cloud-pull">从云端拉取</button>
+        </div>
+        <p class="hint">${cloudReady ? "云同步已配置。" : "云同步未配置。"}同一同步空间下的手机会看到同一份菜谱、周计划和采购清单。</p>
+      </details>
+
+      <details class="my-panel-card">
+        <summary>
+          <span>🏷️ 标签管理</span>
+          <small>查看你的常用标签，编辑菜谱时可调整</small>
+        </summary>
+        <div class="chip-cloud my-tag-cloud">
+          ${allTags.map((tag) => `<span class="tag-dot">${escapeHtml(tag)}</span>`).join("")}
+        </div>
+        <p class="hint">当前标签来自菜谱本身。新增、删除或修改标签时，进入对应菜谱编辑页调整即可。</p>
+      </details>
     </section>
   `;
 }
@@ -604,9 +1136,13 @@ async function importBackup(file) {
     const mode = confirm(`发现 ${backup.dishes.length} 道菜。选择“确定”覆盖当前数据，选择“取消”合并导入。`);
     if (mode) {
       state.dishes = backup.dishes;
+      state.weeklyPlan = normalizeWeeklyPlan(backup.weeklyPlan);
+      state.shoppingState = normalizeShoppingState(backup.shoppingState);
     } else {
       const existingIds = new Set(state.dishes.map((dish) => dish.id));
       state.dishes = [...backup.dishes.filter((dish) => !existingIds.has(dish.id)), ...state.dishes];
+      state.weeklyPlan = normalizeWeeklyPlan(backup.weeklyPlan);
+      state.shoppingState = normalizeShoppingState(backup.shoppingState);
     }
     state.settings = {
       ...state.settings,
@@ -664,13 +1200,47 @@ function escapeAttr(value) {
   return escapeHtml(value);
 }
 
+function closeMealPicker() {
+  mealPicker = { open: false, day: "", meal: "", tags: [] };
+}
+
+function updateShoppingOverride(key, field, value) {
+  state.shoppingState = normalizeShoppingState(state.shoppingState);
+  const list = buildShoppingList({
+    weeklyPlan: state.weeklyPlan,
+    dishes: state.dishes,
+    shoppingState: state.shoppingState,
+  });
+  const item = list.flatMap((group) => group.items).find((entry) => entry.key === key);
+  if (!item || item.custom) return;
+
+  state.shoppingState.overrides[key] = {
+    name: field === "name" ? value.trim() : item.name,
+    quantity: field === "quantity" ? value.trim() : item.quantityText,
+    category: item.category,
+  };
+  persist({ sync: true });
+}
+
+function updateCustomItem(id, field, value) {
+  state.shoppingState = normalizeShoppingState(state.shoppingState);
+  state.shoppingState.customItems = state.shoppingState.customItems.map((item) => (
+    item.id === id
+      ? { ...item, [field === "quantity" ? "quantity" : "name"]: value.trim() }
+      : item
+  )).filter((item) => item.name);
+  persist({ sync: true });
+}
+
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("button, label, [data-view], [data-action]");
   if (!target) return;
 
   const view = target.dataset.view;
   if (view) {
-    if (target.dataset.favorites) favoriteOnly = true;
+    if (view === "library") {
+      favoriteOnly = Boolean(target.dataset.favorites);
+    }
     setView(view);
     return;
   }
@@ -678,7 +1248,7 @@ document.addEventListener("click", async (event) => {
   const action = target.dataset.action;
   if (!action) return;
 
-  if (action === "go-settings") setView("settings");
+  if (action === "go-settings") setView("my");
   if (action === "random") randomPick();
   if (action === "view-dish") setView("detail", { detailId: target.dataset.id, returnView: activeView });
   if (action === "view-current-pick" && currentPick) {
@@ -692,6 +1262,84 @@ document.addEventListener("click", async (event) => {
     favoriteOnly = false;
     searchQuery = "";
     setView("library");
+  }
+  if (action === "weekly-back-home") {
+    closeMealPicker();
+    setView("home");
+  }
+  if (action === "open-meal-picker") {
+    mealPicker = {
+      open: true,
+      day: target.dataset.day,
+      meal: target.dataset.meal,
+      tags: [],
+    };
+    render();
+  }
+  if (action === "close-meal-picker") {
+    closeMealPicker();
+    render();
+  }
+  if (action === "toggle-picker-tag") {
+    const tag = target.dataset.tag;
+    mealPicker.tags = mealPicker.tags.includes(tag)
+      ? mealPicker.tags.filter((item) => item !== tag)
+      : [...mealPicker.tags, tag];
+    render();
+  }
+  if (action === "select-meal-dish") {
+    state.weeklyPlan = setWeeklyMeal(state.weeklyPlan, mealPicker.day, mealPicker.meal, target.dataset.id);
+    closeMealPicker();
+    persist({ sync: true });
+    render();
+  }
+  if (action === "clear-meal-slot") {
+    state.weeklyPlan = clearWeeklyMeal(state.weeklyPlan, mealPicker.day, mealPicker.meal);
+    closeMealPicker();
+    persist({ sync: true });
+    render();
+  }
+  if (action === "reset-weekly-plan") {
+    if (confirm("确定要清空本周早午晚餐计划吗？")) {
+      state.weeklyPlan = createEmptyWeeklyPlan();
+      state.shoppingState = createEmptyShoppingState();
+      persist({ sync: true });
+      render();
+    }
+  }
+  if (action === "reset-weekly-plan-v2") {
+    if (confirm("确定要清空本周所有餐次安排吗？")) {
+      state.weeklyPlan = createEmptyWeeklyPlan();
+      state.shoppingState = createEmptyShoppingState();
+      persist({ sync: true });
+      render();
+    }
+  }
+  if (action === "open-shopping-list") {
+    setView("shopping");
+  }
+  if (action === "copy-shopping-list") {
+    const text = copyShoppingListText(buildShoppingList({
+      weeklyPlan: state.weeklyPlan,
+      dishes: state.dishes,
+      shoppingState: state.shoppingState,
+    }));
+    if (!text) {
+      showToast("清单还是空的，先安排几道菜吧。");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("采购清单已复制。");
+    } catch {
+      showToast("复制失败，可以手动选中文本复制。");
+    }
+  }
+  if (action === "delete-custom-item") {
+    state.shoppingState = normalizeShoppingState(state.shoppingState);
+    state.shoppingState.customItems = state.shoppingState.customItems.filter((item) => item.id !== target.dataset.id);
+    persist({ sync: true });
+    render();
   }
   if (action === "open-image") {
     document.querySelector("[data-lightbox]")?.removeAttribute("hidden");
@@ -719,6 +1367,13 @@ document.addEventListener("click", async (event) => {
   if (action === "delete-dish") {
     if (confirm("确定要删除这道菜谱吗？")) {
       state.dishes = state.dishes.filter((dish) => dish.id !== target.dataset.id);
+      for (const day of Object.keys(state.weeklyPlan.slots || {})) {
+        for (const meal of Object.keys(state.weeklyPlan.slots[day] || {})) {
+          if (state.weeklyPlan.slots[day][meal] === target.dataset.id) {
+            state.weeklyPlan = clearWeeklyMeal(state.weeklyPlan, day, meal);
+          }
+        }
+      }
       persist({ sync: true });
       setView(activeView === "detail" ? (detailReturnView || "library") : "library");
     }
@@ -760,11 +1415,33 @@ document.addEventListener("input", (event) => {
   if (event.target.name === "imageFile") {
     readImageFile(event.target);
   }
+  if (event.target.dataset.shoppingField) {
+    const key = event.target.dataset.key;
+    if (key?.startsWith("custom:")) {
+      updateCustomItem(key.replace("custom:", ""), event.target.dataset.shoppingField, event.target.value);
+    } else {
+      updateShoppingOverride(key, event.target.dataset.shoppingField, event.target.value);
+    }
+  }
 });
 
 document.addEventListener("change", (event) => {
   if (event.target.matches("[data-input='import']")) {
     importBackup(event.target.files?.[0]);
+  }
+  if (event.target.matches("[data-shopping-check]")) {
+    const key = event.target.dataset.shoppingCheck;
+    state.shoppingState = normalizeShoppingState(state.shoppingState);
+    if (key.startsWith("custom:")) {
+      const id = key.replace("custom:", "");
+      state.shoppingState.customItems = state.shoppingState.customItems.map((item) => (
+        item.id === id ? { ...item, checked: event.target.checked } : item
+      ));
+    } else {
+      state.shoppingState.checked[key] = event.target.checked;
+    }
+    persist({ sync: true });
+    render();
   }
 });
 
@@ -815,6 +1492,25 @@ document.addEventListener("submit", (event) => {
     persist();
     showToast("云同步设置已保存。");
   }
+
+  if (form.dataset.form === "custom-ingredient") {
+    const name = form.elements.name.value.trim();
+    if (!name) {
+      showToast("先写一个食材名。");
+      return;
+    }
+    state.shoppingState = normalizeShoppingState(state.shoppingState);
+    state.shoppingState.customItems.push({
+      id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      quantity: form.elements.quantity.value.trim() || "适量",
+      category: form.elements.category.value,
+      checked: false,
+    });
+    persist({ sync: true });
+    showToast("已加入采购清单。");
+    render();
+  }
 });
 
 async function pushCloudNow() {
@@ -837,6 +1533,8 @@ async function pullCloudNow() {
     }
 
     state.dishes = cloudState.dishes;
+    state.weeklyPlan = normalizeWeeklyPlan(cloudState.weeklyPlan);
+    state.shoppingState = normalizeShoppingState(cloudState.shoppingState);
     state.settings = {
       ...state.settings,
       ...cloudState.settings,
@@ -880,6 +1578,8 @@ async function pullCloudOnStartup() {
     }
 
     state.dishes = cloudState.dishes;
+    state.weeklyPlan = normalizeWeeklyPlan(cloudState.weeklyPlan);
+    state.shoppingState = normalizeShoppingState(cloudState.shoppingState);
     state.settings = {
       ...state.settings,
       ...cloudState.settings,
@@ -899,7 +1599,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw-v9.js");
+    navigator.serviceWorker.register("./sw-home-my-v3.js");
   });
 }
 

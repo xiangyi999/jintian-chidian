@@ -118,12 +118,262 @@ export function pickRandomDish(dishes = [], random = Math.random, filters = {}) 
   return candidates[index];
 }
 
-export function buildBackup({ dishes = [], settings = {} } = {}, timestamp = nowIso()) {
+export const WEEK_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+export const MEAL_KEYS = ["breakfast", "lunch", "dinner"];
+export const SHOPPING_CATEGORIES = ["蔬菜类", "肉蛋禽类", "主食干货", "调料辅料"];
+
+function getIsoWeekId(date = new Date()) {
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNumber = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNumber);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  const weekNumber = Math.ceil((((target - yearStart) / 86400000) + 1) / 7);
+  return `${target.getUTCFullYear()}-W${String(weekNumber).padStart(2, "0")}`;
+}
+
+function createEmptySlots() {
+  return WEEK_DAYS.reduce((days, day) => {
+    days[day] = MEAL_KEYS.reduce((meals, meal) => {
+      meals[meal] = "";
+      return meals;
+    }, {});
+    return days;
+  }, {});
+}
+
+export function createEmptyWeeklyPlan(date = new Date()) {
+  return {
+    weekId: getIsoWeekId(date),
+    slots: createEmptySlots(),
+  };
+}
+
+export function normalizeWeeklyPlan(plan = {}, date = new Date()) {
+  const emptyPlan = createEmptyWeeklyPlan(date);
+  const sourceSlots = plan?.slots || {};
+  const slots = createEmptySlots();
+
+  for (const day of WEEK_DAYS) {
+    for (const meal of MEAL_KEYS) {
+      slots[day][meal] = String(sourceSlots?.[day]?.[meal] || "");
+    }
+  }
+
+  return {
+    weekId: String(plan?.weekId || emptyPlan.weekId),
+    slots,
+  };
+}
+
+export function setWeeklyMeal(plan, day, meal, dishId) {
+  const normalized = normalizeWeeklyPlan(plan);
+  if (!WEEK_DAYS.includes(day) || !MEAL_KEYS.includes(meal)) {
+    return normalized;
+  }
+
+  return {
+    ...normalized,
+    slots: {
+      ...normalized.slots,
+      [day]: {
+        ...normalized.slots[day],
+        [meal]: String(dishId || ""),
+      },
+    },
+  };
+}
+
+export function clearWeeklyMeal(plan, day, meal) {
+  return setWeeklyMeal(plan, day, meal, "");
+}
+
+export function createEmptyShoppingState() {
+  return {
+    checked: {},
+    overrides: {},
+    customItems: [],
+  };
+}
+
+export function normalizeShoppingState(shoppingState = {}) {
+  return {
+    checked: { ...(shoppingState?.checked || {}) },
+    overrides: { ...(shoppingState?.overrides || {}) },
+    customItems: Array.isArray(shoppingState?.customItems)
+      ? shoppingState.customItems.map((item) => ({
+          id: String(item.id || `custom-${Date.now().toString(36)}`),
+          name: String(item.name || "").trim(),
+          quantity: String(item.quantity || "").trim(),
+          category: SHOPPING_CATEGORIES.includes(item.category) ? item.category : "调料辅料",
+          checked: Boolean(item.checked),
+        })).filter((item) => item.name)
+      : [],
+  };
+}
+
+const CATEGORY_KEYWORDS = [
+  { category: "蔬菜类", words: ["番茄", "西红柿", "青菜", "生菜", "白菜", "菠菜", "土豆", "胡萝卜", "黄瓜", "茄子", "豆芽", "菌菇", "香菇", "金针菇", "西兰花", "洋葱", "芹菜", "葱", "姜", "蒜", "辣椒", "香菜"] },
+  { category: "肉蛋禽类", words: ["鸡蛋", "鸭蛋", "鹌鹑蛋", "鸡", "鸭", "鹅", "猪", "牛", "羊", "肉", "虾", "鱼", "蟹", "贝", "火腿", "培根"] },
+  { category: "主食干货", words: ["米饭", "大米", "米", "面", "面条", "粉丝", "粉条", "馒头", "吐司", "面包", "年糕", "豆腐", "腐竹", "木耳", "银耳", "红豆", "绿豆"] },
+  { category: "调料辅料", words: ["盐", "糖", "生抽", "老抽", "酱油", "醋", "料酒", "蚝油", "油", "淀粉", "胡椒", "花椒", "芝麻", "辣酱", "豆瓣酱", "味精", "鸡精"] },
+];
+
+function inferIngredientCategory(name = "") {
+  const cleanName = String(name || "");
+  const matched = CATEGORY_KEYWORDS.find((group) => group.words.some((word) => cleanName.includes(word)));
+  return matched?.category || "调料辅料";
+}
+
+export function parseIngredientItem(text = "") {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+  if (!cleanText) {
+    return null;
+  }
+
+  const suitableText = "适量";
+  if (cleanText.endsWith(suitableText)) {
+    const name = cleanText.slice(0, -suitableText.length).trim() || cleanText;
+    return {
+      name,
+      quantity: null,
+      unit: "",
+      quantityText: suitableText,
+      category: inferIngredientCategory(name),
+    };
+  }
+
+  const match = cleanText.match(/^(.+?)\s*([0-9]+(?:\.[0-9]+)?|[一二两三四五六七八九十半]+)\s*([^\d\s]*)$/u);
+  if (!match) {
+    return {
+      name: cleanText,
+      quantity: null,
+      unit: "",
+      quantityText: "适量",
+      category: inferIngredientCategory(cleanText),
+    };
+  }
+
+  const [, rawName, rawQuantity, rawUnit] = match;
+  const name = rawName.trim();
+  const parsedQuantity = Number(rawQuantity);
+  const quantity = Number.isFinite(parsedQuantity) ? parsedQuantity : null;
+  const unit = rawUnit.trim();
+  return {
+    name,
+    quantity,
+    unit,
+    quantityText: `${rawQuantity}${unit}`,
+    category: inferIngredientCategory(name),
+  };
+}
+
+function addIngredientToMap(map, ingredient) {
+  if (!ingredient?.name) return;
+  const unitKey = ingredient.unit || "text";
+  const key = `auto:${ingredient.name}:${unitKey}`;
+  const existing = map.get(key) || [...map.values()].find((item) => item.name === ingredient.name);
+  if (!existing) {
+    map.set(key, {
+      key,
+      name: ingredient.name,
+      category: ingredient.category,
+      unit: ingredient.unit,
+      quantity: ingredient.quantity,
+      quantityText: ingredient.quantityText,
+      quantityTexts: [ingredient.quantityText],
+      checked: false,
+      custom: false,
+    });
+    return;
+  }
+
+  if (existing.quantity !== null && ingredient.quantity !== null && existing.unit === ingredient.unit) {
+    existing.quantity += ingredient.quantity;
+    existing.quantityText = `${existing.quantity}${existing.unit}`;
+    existing.quantityTexts = [existing.quantityText];
+    return;
+  }
+
+  for (const text of [ingredient.quantityText]) {
+    if (text && !existing.quantityTexts.includes(text)) {
+      existing.quantityTexts.push(text);
+    }
+  }
+  existing.quantity = null;
+  existing.quantityText = existing.quantityTexts.join("、");
+}
+
+function getPlannedDishIds(weeklyPlan = {}) {
+  const normalized = normalizeWeeklyPlan(weeklyPlan);
+  return WEEK_DAYS.flatMap((day) => MEAL_KEYS.map((meal) => normalized.slots[day][meal])).filter(Boolean);
+}
+
+function groupShoppingItems(items = []) {
+  return SHOPPING_CATEGORIES.map((category) => ({
+    category,
+    items: items.filter((item) => item.category === category),
+  })).filter((group) => group.items.length);
+}
+
+export function buildShoppingList({ weeklyPlan, dishes = [], shoppingState = {} } = {}) {
+  const normalizedShoppingState = normalizeShoppingState(shoppingState);
+  const dishById = new Map(dishes.map((dish) => [dish.id, dish]));
+  const itemMap = new Map();
+
+  for (const dishId of getPlannedDishIds(weeklyPlan)) {
+    const dish = dishById.get(dishId);
+    if (!dish) continue;
+    const details = parseRecipeDetails(dish.recipe || "");
+    for (const ingredientText of details.ingredients) {
+      addIngredientToMap(itemMap, parseIngredientItem(ingredientText));
+    }
+  }
+
+  const autoItems = [...itemMap.values()].map((item) => {
+    const override = normalizedShoppingState.overrides[item.key] || {};
+    const nextName = String(override.name || item.name).trim();
+    const nextQuantity = String(override.quantity || item.quantityText || "适量").trim();
+    const nextCategory = SHOPPING_CATEGORIES.includes(override.category) ? override.category : item.category;
+    return {
+      ...item,
+      name: nextName,
+      quantityText: nextQuantity,
+      category: nextCategory,
+      checked: Boolean(normalizedShoppingState.checked[item.key]),
+    };
+  });
+
+  const customItems = normalizedShoppingState.customItems.map((item) => ({
+    key: `custom:${item.id}`,
+    id: item.id,
+    name: item.name,
+    quantityText: item.quantity || "适量",
+    category: item.category,
+    checked: Boolean(item.checked),
+    custom: true,
+  }));
+
+  return groupShoppingItems([...autoItems, ...customItems]);
+}
+
+export function copyShoppingListText(list = []) {
+  return list
+    .filter((group) => group.items?.length)
+    .map((group) => [
+      group.category,
+      ...group.items.map((item) => `${item.checked ? "☑" : "☐"} ${item.name} ${item.quantityText || "适量"}`.trim()),
+    ].join("\n"))
+    .join("\n\n");
+}
+
+export function buildBackup({ dishes = [], settings = {}, weeklyPlan, shoppingState } = {}, timestamp = nowIso()) {
   return {
     version: BACKUP_VERSION,
     exportedAt: timestamp,
     dishes,
     tags: getAllTags(dishes),
+    weeklyPlan: normalizeWeeklyPlan(weeklyPlan),
+    shoppingState: normalizeShoppingState(shoppingState),
     settings: {
       ...DEFAULT_SETTINGS,
       ...settings,
@@ -150,6 +400,8 @@ export function parseBackup(raw) {
     exportedAt: parsed.exportedAt || "",
     dishes: parsed.dishes.map((dish) => createDish(dish, dish.updatedAt || nowIso())),
     tags: uniqueTags(parsed.tags || []),
+    weeklyPlan: normalizeWeeklyPlan(parsed.weeklyPlan),
+    shoppingState: normalizeShoppingState(parsed.shoppingState),
     settings: {
       ...DEFAULT_SETTINGS,
       ...(parsed.settings || {}),
@@ -321,11 +573,13 @@ export function sanitizeSettingsForCloud(settings = {}) {
   };
 }
 
-export function buildCloudPayload({ dishes = [], settings = {} } = {}, timestamp = nowIso()) {
+export function buildCloudPayload({ dishes = [], settings = {}, weeklyPlan, shoppingState } = {}, timestamp = nowIso()) {
   return {
     version: BACKUP_VERSION,
     syncedAt: timestamp,
     dishes,
+    weeklyPlan: normalizeWeeklyPlan(weeklyPlan),
+    shoppingState: normalizeShoppingState(shoppingState),
     settings: sanitizeSettingsForCloud(settings),
   };
 }
@@ -338,7 +592,7 @@ function encodeFilterValue(value) {
   return encodeURIComponent(String(value || "").trim());
 }
 
-export async function pushCloudState({ settings = {}, dishes = [], fetchImpl = fetch } = {}) {
+export async function pushCloudState({ settings = {}, dishes = [], weeklyPlan, shoppingState, fetchImpl = fetch } = {}) {
   if (!hasCloudConfig(settings)) {
     throw new Error("请先填写云同步配置");
   }
@@ -346,7 +600,7 @@ export async function pushCloudState({ settings = {}, dishes = [], fetchImpl = f
   const baseUrl = normalizeCloudUrl(settings.cloudUrl);
   const row = {
     id: String(settings.syncSpace).trim(),
-    payload: buildCloudPayload({ dishes, settings }),
+    payload: buildCloudPayload({ dishes, settings, weeklyPlan, shoppingState }),
     updated_at: nowIso(),
   };
 
@@ -399,6 +653,8 @@ export async function pullCloudState({ settings = {}, fetchImpl = fetch } = {}) 
     dishes: Array.isArray(payload.dishes)
       ? payload.dishes.map((dish) => createDish(dish, dish.updatedAt || nowIso()))
       : [],
+    weeklyPlan: normalizeWeeklyPlan(payload.weeklyPlan),
+    shoppingState: normalizeShoppingState(payload.shoppingState),
     settings: {
       ...DEFAULT_SETTINGS,
       ...(payload.settings || {}),

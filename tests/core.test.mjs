@@ -7,12 +7,20 @@ import {
   filterDishes,
   pickRandomDish,
   buildBackup,
+  buildCloudPayload,
   parseBackup,
   buildRecipePrompt,
+  buildShoppingList,
   normalizeSettings,
+  copyShoppingListText,
+  createEmptyShoppingState,
+  createEmptyWeeklyPlan,
+  clearWeeklyMeal,
   parseRecipeDetails,
+  parseIngredientItem,
   requestAiRecipe,
   hasCloudConfig,
+  setWeeklyMeal,
   pushCloudState,
   pullCloudState,
   } from "../src/core.js";
@@ -67,8 +75,15 @@ test("backup roundtrip preserves dishes and excludes api key", () => {
   const dishes = [
     createDish({ name: "番茄鸡蛋饭", tags: ["下饭"], favorite: true }, "2026-06-29T12:00:00.000Z"),
   ];
+  const weeklyPlan = setWeeklyMeal(createEmptyWeeklyPlan(new Date("2026-07-02T12:00:00+08:00")), "mon", "lunch", dishes[0].id);
   const backup = buildBackup({
     dishes,
+    weeklyPlan,
+    shoppingState: {
+      checked: { "auto:番茄:个": true },
+      overrides: {},
+      customItems: [{ id: "custom-1", name: "盐", quantity: "适量", category: "调料辅料", checked: false }],
+    },
     settings: {
       apiKey: "secret-key",
       aiProvider: "openai",
@@ -82,6 +97,8 @@ test("backup roundtrip preserves dishes and excludes api key", () => {
   const parsed = parseBackup(JSON.stringify(backup));
   assert.equal(parsed.dishes.length, 1);
   assert.equal(parsed.dishes[0].name, "番茄鸡蛋饭");
+  assert.equal(parsed.weeklyPlan.slots.mon.lunch, dishes[0].id);
+  assert.equal(parsed.shoppingState.customItems[0].name, "盐");
   assert.equal(parsed.settings.theme, "cream-dessert");
 });
 
@@ -122,6 +139,109 @@ test("parseRecipeDetails falls back to readable steps for plain recipe text", ()
 
   assert.equal(details.ingredients.length, 0);
   assert.deepEqual(details.steps, ["先焯水。", "再拌酱汁。", "最后撒芝麻。"]);
+});
+
+test("createEmptyWeeklyPlan creates current week with seven days and three meals", () => {
+  const plan = createEmptyWeeklyPlan(new Date("2026-07-02T12:00:00+08:00"));
+
+  assert.equal(plan.weekId, "2026-W27");
+  assert.deepEqual(Object.keys(plan.slots), ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  assert.deepEqual(plan.slots.mon, { breakfast: "", lunch: "", dinner: "" });
+  assert.deepEqual(plan.slots.sun, { breakfast: "", lunch: "", dinner: "" });
+});
+
+test("setWeeklyMeal and clearWeeklyMeal update a single meal slot immutably", () => {
+  const plan = createEmptyWeeklyPlan(new Date("2026-07-02T12:00:00+08:00"));
+  const planned = setWeeklyMeal(plan, "wed", "dinner", "dish-1");
+  const cleared = clearWeeklyMeal(planned, "wed", "dinner");
+
+  assert.equal(plan.slots.wed.dinner, "");
+  assert.equal(planned.slots.wed.dinner, "dish-1");
+  assert.equal(cleared.slots.wed.dinner, "");
+});
+
+test("parseIngredientItem extracts name quantity unit and category", () => {
+  assert.deepEqual(parseIngredientItem("番茄 2个"), {
+    name: "番茄",
+    quantity: 2,
+    unit: "个",
+    quantityText: "2个",
+    category: "蔬菜类",
+  });
+  assert.equal(parseIngredientItem("生抽 适量").category, "调料辅料");
+});
+
+test("buildShoppingList merges repeated ingredients and keeps incompatible quantities readable", () => {
+  const dishes = [
+    createDish({ id: "dish-a", name: "番茄饭", recipe: "食材：番茄 2个、鸡蛋 3个、米饭 1碗、生抽 适量" }, "2026-07-02T00:00:00.000Z"),
+    createDish({ id: "dish-b", name: "炒蛋", recipe: "食材：番茄 1个、鸡蛋 2个、生抽 1勺" }, "2026-07-02T00:00:00.000Z"),
+  ];
+  const plan = setWeeklyMeal(
+    setWeeklyMeal(createEmptyWeeklyPlan(new Date("2026-07-02T12:00:00+08:00")), "mon", "lunch", "dish-a"),
+    "tue",
+    "dinner",
+    "dish-b"
+  );
+  const list = buildShoppingList({ weeklyPlan: plan, dishes, shoppingState: createEmptyShoppingState() });
+
+  const vegetables = list.find((group) => group.category === "蔬菜类").items;
+  const proteins = list.find((group) => group.category === "肉蛋禽类").items;
+  const seasoning = list.find((group) => group.category === "调料辅料").items;
+
+  assert.equal(vegetables.find((item) => item.name === "番茄").quantityText, "3个");
+  assert.equal(proteins.find((item) => item.name === "鸡蛋").quantityText, "5个");
+  assert.equal(seasoning.find((item) => item.name === "生抽").quantityText, "适量、1勺");
+});
+
+test("buildShoppingList applies checked state, overrides, and custom items", () => {
+  const dishes = [
+    createDish({ id: "dish-a", name: "番茄饭", recipe: "食材：番茄 2个、鸡蛋 3个" }, "2026-07-02T00:00:00.000Z"),
+  ];
+  const plan = setWeeklyMeal(createEmptyWeeklyPlan(new Date("2026-07-02T12:00:00+08:00")), "mon", "lunch", "dish-a");
+  const shoppingState = {
+    checked: { "auto:番茄:个": true },
+    overrides: { "auto:鸡蛋:个": { name: "土鸡蛋", quantity: "6个", category: "肉蛋禽类" } },
+    customItems: [{ id: "custom-1", name: "葱姜", quantity: "适量", category: "调料辅料", checked: true }],
+  };
+  const list = buildShoppingList({ weeklyPlan: plan, dishes, shoppingState });
+
+  const tomato = list.flatMap((group) => group.items).find((item) => item.name === "番茄");
+  const egg = list.flatMap((group) => group.items).find((item) => item.name === "土鸡蛋");
+  const custom = list.flatMap((group) => group.items).find((item) => item.name === "葱姜");
+
+  assert.equal(tomato.checked, true);
+  assert.equal(egg.quantityText, "6个");
+  assert.equal(custom.checked, true);
+});
+
+test("copyShoppingListText returns grouped plain text", () => {
+  const text = copyShoppingListText([
+    { category: "蔬菜类", items: [{ name: "番茄", quantityText: "3个", checked: false }] },
+    { category: "肉蛋禽类", items: [{ name: "鸡蛋", quantityText: "5个", checked: true }] },
+  ]);
+
+  assert.match(text, /蔬菜类/);
+  assert.match(text, /☐ 番茄 3个/);
+  assert.match(text, /☑ 鸡蛋 5个/);
+});
+
+test("buildCloudPayload includes weekly plan and shopping state", () => {
+  const weeklyPlan = setWeeklyMeal(createEmptyWeeklyPlan(new Date("2026-07-02T12:00:00+08:00")), "fri", "dinner", "dish-1");
+  const payload = buildCloudPayload({
+    dishes: [],
+    weeklyPlan,
+    shoppingState: {
+      checked: { "auto:番茄:个": true },
+      overrides: {},
+      customItems: [{ id: "custom-1", name: "醋", quantity: "1瓶", category: "调料辅料", checked: true }],
+    },
+    settings: { cloudAnonKey: "secret" },
+  }, "2026-07-02T00:00:00.000Z");
+
+  assert.equal(payload.weeklyPlan.slots.fri.dinner, "dish-1");
+  assert.equal(payload.shoppingState.checked["auto:番茄:个"], true);
+  assert.equal(payload.shoppingState.customItems[0].name, "醋");
+  assert.equal(payload.settings.cloudAnonKey, "");
 });
 
 test("requestAiRecipe calls DeepSeek chat completions and extracts content", async () => {
