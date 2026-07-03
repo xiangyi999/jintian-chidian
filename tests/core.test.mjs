@@ -8,6 +8,7 @@ import {
   pickRandomDish,
   buildBackup,
   buildCloudPayload,
+  buildStorageImagePath,
   parseBackup,
   buildRecipePrompt,
   buildShoppingList,
@@ -20,10 +21,94 @@ import {
   parseIngredientItem,
   requestAiRecipe,
   hasCloudConfig,
+  friendlyErrorMessage,
+  friendlyUploadError,
+  getStoragePublicUrl,
+  isCloudImageUrl,
+  isStorageQuotaError,
   setWeeklyMeal,
   pushCloudState,
   pullCloudState,
+  uploadDishImage,
   } from "../src/core.js";
+
+test("storage quota errors are recognized and wrapped in friendly Chinese", () => {
+  const domQuotaError = new DOMException("The quota has been exceeded.", "QuotaExceededError");
+  const storageSetItemError = new Error("Failed to execute 'setItem' on 'Storage': Setting the value of 'jintian-chidian-state-v1' exceeded the quota.");
+
+  assert.equal(isStorageQuotaError(domQuotaError), true);
+  assert.equal(isStorageQuotaError(storageSetItemError), true);
+  assert.equal(isStorageQuotaError(new Error("Network request failed")), false);
+  assert.equal(
+    friendlyErrorMessage(storageSetItemError),
+    "图片太大，本机存储空间不够。请换一张小图，或稍后使用云端图片库。"
+  );
+});
+
+test("storage image paths stay inside the sync space", () => {
+  const path = buildStorageImagePath(
+    { syncSpace: " home menu/2026 " },
+    "dish:tomato/noodle",
+    "2026-07-03T04:05:06.789Z"
+  );
+
+  assert.equal(path, "home-menu-2026/dish-tomato-noodle-20260703T040506789Z.jpg");
+});
+
+test("public storage URLs are generated for Supabase bucket images", () => {
+  const imagePath = "home-menu-2026/dish-1-20260703T040506789Z.jpg";
+  const publicUrl = getStoragePublicUrl(DEFAULT_SETTINGS, "dish-images", imagePath);
+
+  assert.equal(
+    publicUrl,
+    "https://kchquzndyxfaldfxyzfn.supabase.co/storage/v1/object/public/dish-images/home-menu-2026/dish-1-20260703T040506789Z.jpg"
+  );
+  assert.equal(isCloudImageUrl(publicUrl), true);
+  assert.equal(isCloudImageUrl("data:image/jpeg;base64,abc"), false);
+});
+
+test("uploadDishImage uploads data URL images and returns the public URL", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ Key: "dish-images/home-menu-2026/dish-1.jpg" }) };
+  };
+
+  const result = await uploadDishImage({
+    settings: DEFAULT_SETTINGS,
+    dishId: "dish-1",
+    dataUrl: "data:image/jpeg;base64,aGVsbG8=",
+    timestamp: "2026-07-03T04:05:06.789Z",
+    fetchImpl,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].url,
+    "https://kchquzndyxfaldfxyzfn.supabase.co/storage/v1/object/dish-images/home-menu-2026/dish-1-20260703T040506789Z.jpg"
+  );
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(calls[0].options.headers["Content-Type"], "image/jpeg");
+  assert.equal(calls[0].options.headers["x-upsert"], "true");
+  assert.equal(result.imagePath, "home-menu-2026/dish-1-20260703T040506789Z.jpg");
+  assert.equal(isCloudImageUrl(result.image), true);
+});
+
+test("storage upload failures are wrapped in friendly Chinese", async () => {
+  await assert.rejects(
+    () => uploadDishImage({
+      settings: DEFAULT_SETTINGS,
+      dishId: "dish-1",
+      dataUrl: "data:image/jpeg;base64,aGVsbG8=",
+      fetchImpl: async () => ({ ok: false, status: 403 }),
+    }),
+    /图片上传失败/
+  );
+  assert.equal(
+    friendlyUploadError(new Error("storage policy denied")).message,
+    "图片上传失败，请检查网络或 Supabase 图片库设置。"
+  );
+});
 
 test("createDish normalizes dish fields and timestamps", () => {
   const dish = createDish({

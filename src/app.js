@@ -9,6 +9,8 @@ import {
   createEmptyShoppingState,
   createEmptyWeeklyPlan,
   filterDishes,
+  friendlyErrorMessage,
+  friendlyUploadError,
   getAllTags,
   hasCloudConfig,
   normalizeSettings,
@@ -22,9 +24,13 @@ import {
   requestAiRecipe,
   setWeeklyMeal,
   updateDish,
-} from "./core.js?v=20260702-v5";
+  uploadDishImage,
+} from "./core.js?v=20260703-v2";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
+const IMAGE_MAX_EDGE = 900;
+const IMAGE_QUALITY = 0.75;
+const IMAGE_MAX_DATA_URL_LENGTH = 2200000;
 
 const sampleDishes = [
   createDish({
@@ -117,10 +123,16 @@ function loadState() {
 }
 
 function persist(options = {}) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    showToast(friendlyErrorMessage(error));
+    return false;
+  }
   if (options.sync) {
     syncToCloudSilently();
   }
+  return true;
 }
 
 async function syncToCloudSilently() {
@@ -295,6 +307,7 @@ function renderEditor() {
         <span>图片</span>
         <input name="imageFile" type="file" accept="image/*">
         <input name="image" type="hidden" value="${escapeAttr(dish?.image || "")}">
+        <input name="imagePath" type="hidden" value="${escapeAttr(dish?.imagePath || "")}">
         <div class="image-preview">${dishImage(dish, "菜品图片预览")}</div>
       </label>
       <label class="check-row">
@@ -1089,8 +1102,38 @@ function splitTags(value) {
     .filter(Boolean);
 }
 
-function saveDishFromForm(form) {
+function isDataImage(value) {
+  return /^data:image\//i.test(String(value || ""));
+}
+
+async function uploadPendingDishImage(dishId, input) {
+  if (!isDataImage(input.image)) {
+    return input;
+  }
+
+  showToast("正在上传图片到云端。");
+  try {
+    const uploaded = await uploadDishImage({
+      settings: state.settings,
+      dishId,
+      dataUrl: input.image,
+    });
+    showToast("图片已保存到云端。");
+    return {
+      ...input,
+      image: uploaded.image,
+      imagePath: uploaded.imagePath,
+    };
+  } catch (error) {
+    throw friendlyUploadError(error);
+  }
+}
+
+function saveDishFromFormLegacy(form) {
   const image = form.elements.image.value;
+  const previousDishes = [...state.dishes];
+  const previousPick = currentPick;
+  const previousDetailId = detailId;
   const input = {
     name: form.elements.name.value,
     recipe: form.elements.recipe.value,
@@ -1112,8 +1155,61 @@ function saveDishFromForm(form) {
     showToast("已经收进菜谱。");
   }
 
-  persist({ sync: true });
+  if (!persist({ sync: true })) {
+    state.dishes = previousDishes;
+    currentPick = previousPick;
+    detailId = previousDetailId;
+    return;
+  }
+
+  showToast(editingId ? "这道菜已经更新。" : "已经收进菜谱。");
   setView(editingId && editorReturnView === "detail" ? "detail" : "home", { detailId });
+}
+
+async function saveDishFromForm(form) {
+  const previousDishes = [...state.dishes];
+  const previousPick = currentPick;
+  const previousDetailId = detailId;
+  const baseInput = {
+    name: form.elements.name.value,
+    recipe: form.elements.recipe.value,
+    tags: splitTags(form.elements.tags.value),
+    image: form.elements.image.value,
+    imagePath: form.elements.imagePath?.value || "",
+    favorite: form.elements.favorite.checked,
+  };
+
+  try {
+    if (editingId) {
+      const index = state.dishes.findIndex((dish) => dish.id === editingId);
+      const input = await uploadPendingDishImage(editingId, baseInput);
+      state.dishes[index] = updateDish(state.dishes[index], input);
+      currentPick = state.dishes[index];
+      detailId = state.dishes[index].id;
+    } else {
+      let dish = createDish(baseInput);
+      const input = await uploadPendingDishImage(dish.id, baseInput);
+      dish = updateDish(dish, input);
+      state.dishes.unshift(dish);
+      currentPick = dish;
+      detailId = dish.id;
+    }
+
+    if (!persist({ sync: true })) {
+      state.dishes = previousDishes;
+      currentPick = previousPick;
+      detailId = previousDetailId;
+      return;
+    }
+
+    showToast(editingId ? "这道菜已经更新。" : "已经收进菜谱。");
+    setView(editingId && editorReturnView === "detail" ? "detail" : "home", { detailId });
+  } catch (error) {
+    state.dishes = previousDishes;
+    currentPick = previousPick;
+    detailId = previousDetailId;
+    throw error;
+  }
 }
 
 function exportBackup() {
@@ -1161,7 +1257,7 @@ async function importBackup(file) {
   }
 }
 
-function readImageFile(input) {
+function readImageFileLegacy(input) {
   const file = input.files?.[0];
   if (!file) return;
 
@@ -1173,6 +1269,86 @@ function readImageFile(input) {
     preview.innerHTML = `<img src="${escapeAttr(String(reader.result || ""))}" alt="菜品图片预览">`;
   });
   reader.readAsDataURL(file);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(reader.error || new Error("图片读取失败，请换一张图片试试。")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener("load", () => resolve(image));
+    image.addEventListener("error", () => reject(new Error("图片无法读取，请换一张图片试试。")));
+    image.src = dataUrl;
+  });
+}
+
+function getCompressedSize(width, height) {
+  const longestEdge = Math.max(width, height);
+  if (longestEdge <= IMAGE_MAX_EDGE) {
+    return { width, height, scaled: false };
+  }
+  const ratio = IMAGE_MAX_EDGE / longestEdge;
+  return {
+    width: Math.max(1, Math.round(width * ratio)),
+    height: Math.max(1, Math.round(height * ratio)),
+    scaled: true,
+  };
+}
+
+async function compressImageFile(file) {
+  const originalDataUrl = await readFileAsDataUrl(file);
+  const image = await loadImage(originalDataUrl);
+  const size = getCompressedSize(image.naturalWidth || image.width, image.naturalHeight || image.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return { dataUrl: originalDataUrl, compressed: false };
+  }
+
+  context.drawImage(image, 0, 0, size.width, size.height);
+  const compressedDataUrl = canvas.toDataURL("image/jpeg", IMAGE_QUALITY);
+  const dataUrl = compressedDataUrl.length < originalDataUrl.length ? compressedDataUrl : originalDataUrl;
+  if (dataUrl.length > IMAGE_MAX_DATA_URL_LENGTH) {
+    throw new Error("这张图还是太大，请换一张更小的图片。");
+  }
+
+  return {
+    dataUrl,
+    compressed: size.scaled || dataUrl.length < originalDataUrl.length,
+  };
+}
+
+async function readImageFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+
+  try {
+    const result = await compressImageFile(file);
+    const form = input.closest("form");
+    form.elements.image.value = result.dataUrl;
+    if (form.elements.imagePath) {
+      form.elements.imagePath.value = "";
+    }
+    const preview = form.querySelector(".image-preview");
+    preview.innerHTML = `<img src="${escapeAttr(result.dataUrl)}" alt="菜品图片预览">`;
+    if (result.compressed) {
+      showToast("图片太大，已自动压缩，保存时上传到云端。");
+    } else {
+      showToast("图片已选好，保存时上传到云端。");
+    }
+  } catch (error) {
+    input.value = "";
+    showToast(error.message || "图片处理失败，请换一张图片试试。");
+  }
 }
 
 function showToast(message) {
@@ -1457,15 +1633,15 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
 
   if (form.dataset.form === "dish") {
     try {
-      saveDishFromForm(form);
+      await saveDishFromForm(form);
     } catch (error) {
-      showToast(error.message || "保存失败，请检查内容。");
+      showToast(error.message || friendlyErrorMessage(error));
     }
   }
 
@@ -1599,7 +1775,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw-home-my-v3.js");
+    navigator.serviceWorker.register("./sw-cloud-images-v1.js");
   });
 }
 

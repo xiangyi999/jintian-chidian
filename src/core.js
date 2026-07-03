@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   cloudAnonKey: "sb_publishable_V3tGdQCaPO9B46SpkWSMmg_GjtVras_",
   syncSpace: "home-menu-2026",
   cloudSyncEnabled: true,
+  imageBucket: "dish-images",
   defaultRandomScope: "all",
   theme: "cream-dessert",
 };
@@ -34,11 +35,31 @@ export function normalizeSettings(settings = {}) {
   if (!String(next.syncSpace || "").trim()) {
     next.syncSpace = DEFAULT_SETTINGS.syncSpace;
   }
+  if (!String(next.imageBucket || "").trim()) {
+    next.imageBucket = DEFAULT_SETTINGS.imageBucket;
+  }
   if (hadBlankCloudSetting) {
     next.cloudSyncEnabled = DEFAULT_SETTINGS.cloudSyncEnabled;
   }
 
   return next;
+}
+
+export function isStorageQuotaError(error) {
+  const name = String(error?.name || "");
+  const message = String(error?.message || error || "").toLowerCase();
+  return name === "QuotaExceededError"
+    || name === "NS_ERROR_DOM_QUOTA_REACHED"
+    || message.includes("exceeded the quota")
+    || message.includes("quota has been exceeded")
+    || (message.includes("setitem") && message.includes("storage") && message.includes("quota"));
+}
+
+export function friendlyErrorMessage(error) {
+  if (isStorageQuotaError(error)) {
+    return "图片太大，本机存储空间不够。请换一张小图，或稍后使用云端图片库。";
+  }
+  return "保存失败，请检查内容后再试一次。";
 }
 
 function nowIso() {
@@ -69,6 +90,7 @@ export function createDish(input = {}, timestamp = nowIso()) {
     name,
     recipe: String(input.recipe || "").trim(),
     image: input.image || "",
+    imagePath: input.imagePath || "",
     tags: uniqueTags(input.tags || []),
     favorite: Boolean(input.favorite),
     createdAt: input.createdAt || timestamp,
@@ -590,6 +612,122 @@ function normalizeCloudUrl(url) {
 
 function encodeFilterValue(value) {
   return encodeURIComponent(String(value || "").trim());
+}
+
+function encodeStoragePath(path) {
+  return String(path || "")
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function storageSafeSegment(value, fallback) {
+  const segment = String(value || "")
+    .trim()
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return segment || fallback;
+}
+
+function timestampForStorage(timestamp = nowIso()) {
+  const date = new Date(timestamp);
+  const iso = Number.isNaN(date.getTime()) ? nowIso() : date.toISOString();
+  return iso.replace(/[-:.]/g, "");
+}
+
+function dataUrlToBlob(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+  if (!match) {
+    throw new Error("图片格式无法上传，请换一张图片试试。");
+  }
+
+  const mimeType = match[1] || "image/jpeg";
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] || "";
+  if (isBase64) {
+    const binary = typeof atob === "function"
+      ? atob(payload)
+      : Buffer.from(payload, "base64").toString("binary");
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return { blob: new Blob([bytes], { type: mimeType }), mimeType };
+  }
+
+  return { blob: new Blob([decodeURIComponent(payload)], { type: mimeType }), mimeType };
+}
+
+export function buildStorageImagePath(settings = {}, dishId = "", timestamp = nowIso()) {
+  const space = storageSafeSegment(settings.syncSpace || DEFAULT_SETTINGS.syncSpace, DEFAULT_SETTINGS.syncSpace);
+  const id = storageSafeSegment(dishId, "dish");
+  return `${space}/${id}-${timestampForStorage(timestamp)}.jpg`;
+}
+
+export function getStoragePublicUrl(settings = {}, bucket = DEFAULT_SETTINGS.imageBucket, path = "") {
+  const baseUrl = normalizeCloudUrl(settings.cloudUrl || DEFAULT_SETTINGS.cloudUrl);
+  const bucketName = storageSafeSegment(bucket || DEFAULT_SETTINGS.imageBucket, DEFAULT_SETTINGS.imageBucket);
+  return `${baseUrl}/storage/v1/object/public/${bucketName}/${encodeStoragePath(path)}`;
+}
+
+export function isCloudImageUrl(value) {
+  const text = String(value || "").trim();
+  if (!/^https?:\/\//i.test(text)) {
+    return false;
+  }
+
+  try {
+    const url = new URL(text);
+    return url.pathname.includes("/storage/v1/object/public/");
+  } catch {
+    return false;
+  }
+}
+
+export function friendlyUploadError(error) {
+  const message = String(error?.message || error || "");
+  if (message.includes("请先填写云同步配置")) {
+    return new Error("请先在我的页面保存云同步设置。");
+  }
+  return new Error("图片上传失败，请检查网络或 Supabase 图片库设置。");
+}
+
+export async function uploadDishImage({
+  settings = {},
+  dishId = "",
+  dataUrl = "",
+  timestamp = nowIso(),
+  fetchImpl = fetch,
+} = {}) {
+  if (!hasCloudConfig(settings)) {
+    throw friendlyUploadError(new Error("请先填写云同步配置"));
+  }
+
+  const { blob, mimeType } = dataUrlToBlob(dataUrl);
+  const bucket = storageSafeSegment(settings.imageBucket || DEFAULT_SETTINGS.imageBucket, DEFAULT_SETTINGS.imageBucket);
+  const imagePath = buildStorageImagePath(settings, dishId, timestamp);
+  const baseUrl = normalizeCloudUrl(settings.cloudUrl);
+  const response = await fetchImpl(`${baseUrl}/storage/v1/object/${bucket}/${encodeStoragePath(imagePath)}`, {
+    method: "POST",
+    headers: {
+      apikey: settings.cloudAnonKey,
+      Authorization: `Bearer ${settings.cloudAnonKey}`,
+      "Content-Type": mimeType,
+      "cache-control": "31536000",
+      "x-upsert": "true",
+    },
+    body: blob,
+  });
+
+  if (!response.ok) {
+    throw friendlyUploadError(new Error(`Storage upload failed: ${response.status}`));
+  }
+
+  return {
+    image: getStoragePublicUrl(settings, bucket, imagePath),
+    imagePath,
+  };
 }
 
 export async function pushCloudState({ settings = {}, dishes = [], weeklyPlan, shoppingState, fetchImpl = fetch } = {}) {
