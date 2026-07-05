@@ -16,6 +16,7 @@ import {
   normalizeSettings,
   normalizeShoppingState,
   normalizeWeeklyPlan,
+  parseIngredientInput,
   parseRecipeDetails,
   parseBackup,
   pickRandomDish,
@@ -25,7 +26,7 @@ import {
   setWeeklyMeal,
   updateDish,
   uploadDishImage,
-} from "./core.js?v=20260703-v2";
+} from "./core.js?v=20260705-v1";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 const IMAGE_MAX_EDGE = 900;
@@ -284,6 +285,7 @@ function refreshDishList() {
 function renderEditor() {
   const dish = editingId ? state.dishes.find((item) => item.id === editingId) : null;
   const tagValue = dish?.tags?.join("，") || "";
+  const ingredientValue = (dish?.ingredients || []).join("\n");
 
   app.innerHTML = `
     <section class="page-title">
@@ -296,8 +298,16 @@ function renderEditor() {
         <input name="name" required maxlength="30" value="${escapeAttr(dish?.name || "")}" placeholder="比如：凉拌鸡丝面">
       </label>
       <label>
-        <span>做法</span>
+        <span>食材清单</span>
+        <textarea name="ingredients" rows="4" placeholder="一行一个，比如：&#10;鸡蛋 2个&#10;番茄 1个">${escapeHtml(ingredientValue)}</textarea>
+      </label>
+      <label>
+        <span>文字做法</span>
         <textarea name="recipe" rows="6" placeholder="简单写几步，或者稍后让 AI 推荐">${escapeHtml(dish?.recipe || "")}</textarea>
+      </label>
+      <label>
+        <span>视频做法链接</span>
+        <input name="videoUrl" value="${escapeAttr(dish?.videoUrl || "")}" placeholder="粘贴抖音视频链接">
       </label>
       <label>
         <span>标签</span>
@@ -333,6 +343,7 @@ function renderDetail() {
   detailId = dish.id;
   currentPick = dish;
   const details = parseRecipeDetails(dish.recipe);
+  const ingredients = dish.ingredients?.length ? dish.ingredients : details.ingredients;
   const tags = dish.tags?.length ? dish.tags : ["未加标签"];
 
   app.innerHTML = `
@@ -368,8 +379,10 @@ function renderDetail() {
           <span class="module-mark">01</span>
           <h3>食材清单</h3>
         </div>
-        ${renderIngredientList(details.ingredients)}
+        ${renderIngredientList(ingredients)}
       </section>
+
+      ${renderVideoLink(dish.videoUrl)}
 
       <section class="detail-module">
         <div class="detail-module-title">
@@ -408,6 +421,23 @@ function renderIngredientList(ingredients = []) {
   }
 
   return `<ul class="ingredient-list">${ingredients.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderVideoLink(videoUrl = "") {
+  if (!videoUrl) {
+    return "";
+  }
+
+  return `
+    <section class="detail-module detail-video">
+      <div class="detail-module-title">
+        <span class="module-mark">▶</span>
+        <h3>视频做法</h3>
+      </div>
+      <a class="video-pill" href="${escapeAttr(videoUrl)}" target="_blank" rel="noopener noreferrer">看视频做法</a>
+      <p class="muted">会跳转到外部视频页面，适合边看边做。</p>
+    </section>
+  `;
 }
 
 function renderStepList(steps = []) {
@@ -1173,6 +1203,8 @@ async function saveDishFromForm(form) {
   const baseInput = {
     name: form.elements.name.value,
     recipe: form.elements.recipe.value,
+    ingredients: parseIngredientInput(form.elements.ingredients?.value || ""),
+    videoUrl: form.elements.videoUrl?.value || "",
     tags: splitTags(form.elements.tags.value),
     image: form.elements.image.value,
     imagePath: form.elements.imagePath?.value || "",
@@ -1775,7 +1807,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw-cloud-images-v1.js");
+    navigator.serviceWorker.register("./sw-dish-video-v1.js");
   });
 }
 

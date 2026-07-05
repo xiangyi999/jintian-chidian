@@ -17,6 +17,7 @@ import {
   createEmptyShoppingState,
   createEmptyWeeklyPlan,
   clearWeeklyMeal,
+  parseIngredientInput,
   parseRecipeDetails,
   parseIngredientItem,
   requestAiRecipe,
@@ -114,17 +115,35 @@ test("createDish normalizes dish fields and timestamps", () => {
   const dish = createDish({
     name: "  番茄鸡蛋饭  ",
     recipe: "拌饭很好吃",
+    ingredients: [" 番茄 1个 ", "鸡蛋 2个", "番茄 1个", ""],
+    videoUrl: " https://v.douyin.com/example/ ",
     tags: [" 下饭 ", "快手", "下饭", ""],
     image: "data:image/png;base64,abc",
     favorite: true,
   }, "2026-06-29T12:00:00.000Z");
 
   assert.equal(dish.name, "番茄鸡蛋饭");
+  assert.deepEqual(dish.ingredients, ["番茄 1个", "鸡蛋 2个"]);
+  assert.equal(dish.videoUrl, "https://v.douyin.com/example/");
   assert.deepEqual(dish.tags, ["下饭", "快手"]);
   assert.equal(dish.favorite, true);
   assert.equal(dish.createdAt, "2026-06-29T12:00:00.000Z");
   assert.equal(dish.updatedAt, "2026-06-29T12:00:00.000Z");
   assert.match(dish.id, /^dish-/);
+});
+
+test("parseIngredientInput accepts lines and common Chinese separators", () => {
+  assert.deepEqual(
+    parseIngredientInput("番茄 1个\n鸡蛋 2个，生抽 适量、盐 少许"),
+    ["番茄 1个", "鸡蛋 2个", "生抽 适量", "盐 少许"]
+  );
+});
+
+test("createDish rejects video links that are not http urls", () => {
+  assert.throws(
+    () => createDish({ name: "视频菜", videoUrl: "douyin://bad" }),
+    /视频链接需要以 http/
+  );
 });
 
 test("filterDishes supports search, favorite, and all selected tags", () => {
@@ -276,6 +295,24 @@ test("buildShoppingList merges repeated ingredients and keeps incompatible quant
   assert.equal(vegetables.find((item) => item.name === "番茄").quantityText, "3个");
   assert.equal(proteins.find((item) => item.name === "鸡蛋").quantityText, "5个");
   assert.equal(seasoning.find((item) => item.name === "生抽").quantityText, "适量、1勺");
+});
+
+test("buildShoppingList prefers dish ingredients over recipe ingredient text", () => {
+  const dishes = [
+    createDish({
+      id: "dish-a",
+      name: "独立食材菜",
+      recipe: "食材：不会出现 9个\n步骤：简单炒一炒。",
+      ingredients: ["番茄 2个", "鸡蛋 3个"],
+    }, "2026-07-02T00:00:00.000Z"),
+  ];
+  const plan = setWeeklyMeal(createEmptyWeeklyPlan(new Date("2026-07-02T12:00:00+08:00")), "mon", "lunch", "dish-a");
+  const list = buildShoppingList({ weeklyPlan: plan, dishes, shoppingState: createEmptyShoppingState() });
+  const allItems = list.flatMap((group) => group.items);
+
+  assert.equal(allItems.some((item) => item.name === "不会出现"), false);
+  assert.equal(allItems.find((item) => item.name === "番茄").quantityText, "2个");
+  assert.equal(allItems.find((item) => item.name === "鸡蛋").quantityText, "3个");
 });
 
 test("buildShoppingList applies checked state, overrides, and custom items", () => {

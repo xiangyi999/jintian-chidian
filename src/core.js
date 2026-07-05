@@ -74,6 +74,26 @@ function uniqueTags(tags = []) {
   )];
 }
 
+export function parseIngredientInput(value = "") {
+  const items = Array.isArray(value) ? value : String(value || "").split(/[\n\r，、,;；]+/);
+  return [...new Set(
+    items
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+  )];
+}
+
+function normalizeVideoUrl(value = "") {
+  const url = String(value || "").trim();
+  if (!url) {
+    return "";
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error("视频链接需要以 http:// 或 https:// 开头");
+  }
+  return url;
+}
+
 function makeDishId() {
   const randomPart = Math.random().toString(36).slice(2, 10);
   return `dish-${Date.now().toString(36)}-${randomPart}`;
@@ -89,6 +109,8 @@ export function createDish(input = {}, timestamp = nowIso()) {
     id: input.id || makeDishId(),
     name,
     recipe: String(input.recipe || "").trim(),
+    ingredients: parseIngredientInput(input.ingredients || []),
+    videoUrl: normalizeVideoUrl(input.videoUrl),
     image: input.image || "",
     imagePath: input.imagePath || "",
     tags: uniqueTags(input.tags || []),
@@ -345,8 +367,9 @@ export function buildShoppingList({ weeklyPlan, dishes = [], shoppingState = {} 
   for (const dishId of getPlannedDishIds(weeklyPlan)) {
     const dish = dishById.get(dishId);
     if (!dish) continue;
-    const details = parseRecipeDetails(dish.recipe || "");
-    for (const ingredientText of details.ingredients) {
+    const ingredients = parseIngredientInput(dish.ingredients || []);
+    const details = ingredients.length ? null : parseRecipeDetails(dish.recipe || "");
+    for (const ingredientText of (ingredients.length ? ingredients : details.ingredients)) {
       addIngredientToMap(itemMap, parseIngredientItem(ingredientText));
     }
   }

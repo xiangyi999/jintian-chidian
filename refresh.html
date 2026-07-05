@@ -54,11 +54,11 @@
           await Promise.all(keys.map((key) => caches.delete(key)));
         }
 
-        location.replace("./index.html?codex-force=20260703-v2");
+        location.replace("./index.html?codex-force=20260705-v1");
       }
 
       refreshApp().catch(() => {
-        location.replace("./index.html?codex-force=20260703-v2");
+        location.replace("./index.html?codex-force=20260705-v1");
       });
     </script>
   </body>
