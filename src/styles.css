@@ -7,13 +7,13 @@
   --pink: #f8c8dc;
   --green: #b9d8a8;
   --ink: #4a4a4a;
-  --muted: #806f65;
+  --muted: #888888;
   --line: rgba(74, 74, 74, 0.12);
   --white: rgba(255, 255, 255, 0.76);
-  --shadow: 0 18px 42px rgba(180, 117, 76, 0.16);
-  --radius-xl: 28px;
-  --radius-lg: 22px;
-  --radius-md: 18px;
+  --shadow: 0 16px 36px rgba(180, 160, 120, 0.15);
+  --radius-xl: 20px;
+  --radius-lg: 20px;
+  --radius-md: 24px;
   font-family: "Nunito", "Avenir Next Rounded Std", "Hiragino Maru Gothic ProN", "Microsoft YaHei UI", "PingFang SC", sans-serif;
 }
 
@@ -41,6 +41,30 @@ select {
 button {
   color: inherit;
   cursor: pointer;
+  transition: transform 0.14s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+button:active,
+.dish-card:active,
+.my-action-card:active,
+.weekly-entry button:active,
+.hero-open-target:active,
+.tag-chip:active,
+.video-pill:active,
+.picker-dish:active,
+.meal-row:active {
+  transform: scale(0.97);
+}
+
+.dish-card,
+.my-action-card,
+.weekly-entry button,
+.hero-open-target,
+.tag-chip,
+.video-pill,
+.picker-dish,
+.meal-row {
+  transition: transform 0.14s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
 .app-shell {
@@ -49,7 +73,7 @@ button {
   max-width: 430px;
   min-height: 100vh;
   margin: 0 auto;
-  padding: 22px 18px calc(98px + env(safe-area-inset-bottom));
+  padding: 24px 18px calc(104px + env(safe-area-inset-bottom));
   overflow-x: hidden;
 }
 
@@ -101,7 +125,7 @@ p {
 
 .content {
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .soft-icon-button,
@@ -113,7 +137,7 @@ p {
 .text-button,
 .tiny-actions button {
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-md);
 }
 
 .soft-icon-button {
@@ -126,10 +150,14 @@ p {
 .hero-panel {
   position: relative;
   overflow: hidden;
-  padding: 22px;
+  padding: 24px;
   border-radius: var(--radius-xl);
   background: rgba(255, 249, 237, 0.86);
   box-shadow: var(--shadow);
+}
+
+.home-hero-panel {
+  background: linear-gradient(145deg, rgba(255, 249, 237, 0.96), rgba(255, 237, 200, 0.82));
 }
 
 .hero-panel::after {
@@ -177,7 +205,7 @@ p {
   width: 132px;
   height: 132px;
   overflow: hidden;
-  border-radius: 34px;
+  border-radius: var(--radius-xl);
   background: var(--cream);
   transform: rotate(3deg);
 }
@@ -211,7 +239,7 @@ p {
 
 .tag-dot {
   padding: 7px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   background: rgba(255, 216, 177, 0.56);
   color: #6f5748;
   font-size: 12px;
@@ -228,7 +256,7 @@ p {
 .primary-pill {
   color: #64442f;
   background: var(--orange);
-  box-shadow: 0 12px 20px rgba(240, 169, 104, 0.22);
+  box-shadow: 0 12px 22px rgba(180, 160, 120, 0.15);
 }
 
 .secondary-pill,
@@ -253,11 +281,11 @@ p {
 .empty-state {
   border-radius: var(--radius-lg);
   background: rgba(255, 249, 237, 0.72);
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(74, 74, 74, 0.08);
 }
 
 .section-block {
-  padding: 18px;
+  padding: 21px;
 }
 
 .section-heading,
@@ -283,14 +311,14 @@ p {
 
 .tag-chip {
   min-height: 38px;
-  padding: 0 13px;
-  background: rgba(255, 216, 177, 0.58);
-  color: #6f5748;
+  padding: 0 14px;
+  background: linear-gradient(145deg, rgba(255, 216, 177, 0.6), rgba(255, 231, 204, 0.72));
+  color: var(--ink);
 }
 
 .tag-chip.is-selected {
-  background: var(--pink);
-  color: #694659;
+  background: linear-gradient(145deg, rgba(255, 216, 177, 0.86), rgba(248, 200, 220, 0.78));
+  color: var(--ink);
   box-shadow: inset 0 0 0 1px rgba(120, 76, 96, 0.1);
 }
 
@@ -310,18 +338,15 @@ p {
 }
 
 .hero-divider {
-  position: relative;
-  z-index: 1;
-  height: 1px;
-  margin: 18px 0 16px;
-  background: rgba(74, 74, 74, 0.1);
+  display: none;
 }
 
 .hero-filter {
   position: relative;
   z-index: 1;
   display: grid;
-  gap: 12px;
+  gap: 14px;
+  margin-top: 20px;
 }
 
 .hero-filter .section-heading {
@@ -329,7 +354,16 @@ p {
 }
 
 .home-hero-panel .hero-filter + .action-row {
-  margin-top: 18px;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.hero-filter-summary {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .weekly-entry button {
@@ -385,7 +419,7 @@ p {
 .thumb,
 .image-preview {
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: var(--radius-xl);
   background: var(--cream);
 }
 
@@ -424,47 +458,67 @@ p {
 
 .dish-card {
   display: grid;
-  grid-template-columns: 92px 1fr;
-  gap: 14px;
-  padding: 12px;
+  grid-template-columns: 104px 1fr;
+  align-items: start;
+  gap: 18px;
+  padding: 16px;
   cursor: pointer;
 }
 
 .thumb {
-  width: 92px;
-  height: 112px;
+  width: 104px;
+  aspect-ratio: 4 / 3;
+  height: auto;
 }
 
 .dish-info {
+  display: grid;
+  align-content: start;
+  gap: 10px;
   min-width: 0;
 }
 
 .dish-info h3 {
-  max-width: 132px;
+  max-width: none;
+  margin: 0;
   overflow-wrap: anywhere;
 }
 
 .dish-info p {
-  margin: 8px 0 0;
+  margin: 0;
   font-size: 13px;
+}
+
+.dish-card .dish-title-row {
+  margin-bottom: 0;
+}
+
+.dish-card .tag-row {
+  margin: 0;
+  gap: 7px;
+}
+
+.dish-card .tag-dot {
+  padding: 6px 9px;
+  font-size: 11px;
 }
 
 .mini-button {
   flex: 0 0 auto;
   padding: 7px 10px;
-  background: var(--pink);
-  color: #6d5360;
+  background: rgba(248, 200, 220, 0.72);
+  color: var(--ink);
   font-size: 12px;
 }
 
 .tiny-actions {
-  margin-top: 12px;
+  margin-top: 2px;
 }
 
 .tiny-actions button {
   padding: 8px 10px;
-  background: rgba(185, 216, 168, 0.46);
-  color: #52664d;
+  background: rgba(185, 216, 168, 0.5);
+  color: var(--ink);
   font-size: 12px;
 }
 
@@ -484,7 +538,7 @@ p {
   gap: 16px;
   min-height: calc(100vh - 120px);
   padding: 12px 12px 22px;
-  border-radius: 30px;
+  border-radius: var(--radius-xl);
   background: rgba(255, 249, 237, 0.86);
   box-shadow: var(--shadow), inset 0 0 0 1px rgba(74, 74, 74, 0.08);
 }
@@ -499,9 +553,9 @@ p {
   gap: 8px;
   min-height: 52px;
   padding: 6px;
-  border-radius: 24px;
+  border-radius: var(--radius-xl);
   background: rgba(255, 249, 237, 0.9);
-  box-shadow: 0 10px 26px rgba(132, 89, 58, 0.1);
+  box-shadow: 0 10px 26px rgba(180, 160, 120, 0.15);
   backdrop-filter: blur(14px);
 }
 
@@ -557,16 +611,16 @@ p {
   z-index: 12;
   min-width: 118px;
   padding: 8px;
-  border-radius: 18px;
+  border-radius: var(--radius-xl);
   background: var(--cream-soft);
-  box-shadow: 0 14px 34px rgba(132, 89, 58, 0.18);
+  box-shadow: 0 14px 34px rgba(180, 160, 120, 0.15);
 }
 
 .detail-more button {
   width: 100%;
   min-height: 40px;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: #ffe1da;
   color: #9a463d;
   font-weight: 800;
@@ -580,9 +634,9 @@ p {
   overflow: hidden;
   padding: 0;
   border: 0;
-  border-radius: 24px;
+  border-radius: var(--radius-xl);
   background: var(--cream);
-  box-shadow: 0 16px 38px rgba(132, 89, 58, 0.14);
+  box-shadow: var(--shadow);
 }
 
 .detail-hero-image img {
@@ -597,7 +651,7 @@ p {
   bottom: 12px;
   width: 42px;
   height: 42px;
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   background:
     radial-gradient(circle at 50% 28%, #f8c8dc 0 5px, transparent 6px),
     linear-gradient(90deg, transparent 18px, rgba(100, 68, 47, 0.45) 19px 21px, transparent 22px),
@@ -626,7 +680,7 @@ p {
   display: grid;
   gap: 12px;
   padding: 16px;
-  border-radius: 22px;
+  border-radius: var(--radius-xl);
   background: rgba(255, 255, 255, 0.58);
   box-shadow: inset 0 0 0 1px rgba(74, 74, 74, 0.08);
 }
@@ -665,7 +719,7 @@ p {
 
 .ingredient-list li {
   padding: 11px 13px;
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   background: rgba(255, 243, 217, 0.72);
   color: #5e5048;
   line-height: 1.55;
@@ -728,7 +782,7 @@ p {
   padding: 8px;
   border-radius: 28px;
   background: rgba(255, 249, 237, 0.9);
-  box-shadow: 0 16px 40px rgba(132, 89, 58, 0.2);
+  box-shadow: 0 16px 40px rgba(180, 160, 120, 0.15);
   backdrop-filter: blur(16px);
   transform: translateX(-50%);
 }
@@ -785,13 +839,28 @@ p {
 
 .editor-form {
   display: grid;
-  gap: 15px;
+  gap: 18px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.editor-form.compact-form {
   padding: 18px;
+  background: rgba(255, 249, 237, 0.72);
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(74, 74, 74, 0.08);
+}
+
+.form-field-card {
+  padding: 18px;
+  border-radius: var(--radius-xl);
+  background: rgba(255, 249, 237, 0.76);
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(74, 74, 74, 0.08);
 }
 
 .editor-form label {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   font-weight: 800;
 }
 
@@ -830,7 +899,8 @@ p {
 
 .form-actions {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  padding-top: 2px;
 }
 
 .import-button {
@@ -893,26 +963,32 @@ p {
 
 .my-card {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .my-section {
   display: grid;
-  gap: 12px;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.my-section + .my-section {
+  margin-top: 20px;
 }
 
 .my-section-label {
-  margin: 2px 2px -2px;
+  margin: 4px 2px 0;
   color: var(--muted);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .my-action-card,
 .my-info-card,
 .my-panel-card {
   width: 100%;
-  padding: 17px 18px;
+  min-height: 78px;
+  padding: 19px 20px;
   border: 0;
   color: var(--ink);
   text-align: left;
@@ -921,15 +997,36 @@ p {
 .my-action-card,
 .my-info-card {
   display: grid;
-  gap: 5px;
+  gap: 7px;
 }
 
 .my-action-card {
   background: rgba(255, 249, 237, 0.76);
 }
 
-.my-action-card:active {
-  transform: translateY(1px);
+.my-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 4px 0 2px;
+}
+
+.my-stat-grid b {
+  display: grid;
+  gap: 2px;
+  padding: 10px 8px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 216, 177, 0.36);
+  color: var(--ink);
+  font-size: 23px;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.my-stat-grid small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .my-panel-card {
@@ -975,10 +1072,10 @@ p {
 .day-card,
 .shopping-card,
 .custom-ingredient-form {
-  padding: 16px;
-  border-radius: 22px;
+  padding: 18px;
+  border-radius: var(--radius-xl);
   background: rgba(255, 249, 237, 0.76);
-  box-shadow: inset 0 0 0 1px var(--line), 0 12px 28px rgba(180, 117, 76, 0.08);
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(74, 74, 74, 0.08);
 }
 
 .day-card h3,
@@ -991,7 +1088,7 @@ p {
 .picker-dish {
   width: 100%;
   border: 0;
-  border-radius: 18px;
+  border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.56);
   color: var(--ink);
   text-align: left;
@@ -1189,7 +1286,7 @@ p {
   width: 100%;
   min-width: 0;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: rgba(255, 249, 237, 0.72);
   color: var(--ink);
   outline: 0;
@@ -1231,15 +1328,16 @@ p {
   padding: 8px;
   border-radius: 28px;
   background: rgba(255, 249, 237, 0.88);
-  box-shadow: 0 16px 40px rgba(132, 89, 58, 0.2);
+  box-shadow: 0 16px 40px rgba(180, 160, 120, 0.15);
   backdrop-filter: blur(16px);
   transform: translateX(-50%);
 }
 
 .nav-item {
+  position: relative;
   min-height: 48px;
   border: 0;
-  border-radius: 22px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--muted);
   font-size: 13px;
@@ -1249,6 +1347,18 @@ p {
 .nav-item.is-active {
   color: #64442f;
   background: var(--orange);
+}
+
+.nav-item.is-active::after {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  width: 18px;
+  height: 3px;
+  border-radius: var(--radius-md);
+  background: rgba(100, 68, 47, 0.34);
+  content: "";
+  transform: translateX(-50%);
 }
 
 .compact-form {
@@ -1298,5 +1408,28 @@ p {
   .app-shell {
     max-width: 390px;
     margin: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  button:active,
+  .dish-card:active,
+  .my-action-card:active,
+  .weekly-entry button:active,
+  .hero-open-target:active,
+  .tag-chip:active,
+  .video-pill:active,
+  .picker-dish:active,
+  .meal-row:active {
+    transform: none;
   }
 }

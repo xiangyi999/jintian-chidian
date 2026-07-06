@@ -26,7 +26,7 @@ import {
   setWeeklyMeal,
   updateDish,
   uploadDishImage,
-} from "./core.js?v=20260705-v1";
+} from "./core.js?v=20260706-v1";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 const IMAGE_MAX_EDGE = 900;
@@ -293,34 +293,34 @@ function renderEditor() {
       <h2>${dish ? escapeHtml(dish.name) : "把想吃的收进来"}</h2>
     </section>
     <form class="editor-form" data-form="dish">
-      <label>
+      <label class="form-field-card">
         <span>菜名</span>
         <input name="name" required maxlength="30" value="${escapeAttr(dish?.name || "")}" placeholder="比如：凉拌鸡丝面">
       </label>
-      <label>
+      <label class="form-field-card">
         <span>食材清单</span>
-        <textarea name="ingredients" rows="4" placeholder="一行一个，比如：&#10;鸡蛋 2个&#10;番茄 1个">${escapeHtml(ingredientValue)}</textarea>
+        <textarea name="ingredients" rows="4" placeholder="一行填写一种食材+数量，例：鸡蛋 2个">${escapeHtml(ingredientValue)}</textarea>
       </label>
-      <label>
+      <label class="form-field-card">
         <span>文字做法</span>
-        <textarea name="recipe" rows="6" placeholder="简单写几步，或者稍后让 AI 推荐">${escapeHtml(dish?.recipe || "")}</textarea>
+        <textarea name="recipe" rows="6" placeholder="分步填写烹饪步骤">${escapeHtml(dish?.recipe || "")}</textarea>
       </label>
-      <label>
+      <label class="form-field-card">
         <span>视频做法链接</span>
         <input name="videoUrl" value="${escapeAttr(dish?.videoUrl || "")}" placeholder="粘贴抖音视频链接">
       </label>
-      <label>
+      <label class="form-field-card">
         <span>标签</span>
         <input name="tags" value="${escapeAttr(tagValue)}" placeholder="凉爽的，方便下饭，快手">
       </label>
-      <label class="image-picker">
+      <label class="form-field-card image-picker">
         <span>图片</span>
         <input name="imageFile" type="file" accept="image/*">
         <input name="image" type="hidden" value="${escapeAttr(dish?.image || "")}">
         <input name="imagePath" type="hidden" value="${escapeAttr(dish?.imagePath || "")}">
         <div class="image-preview">${dishImage(dish, "菜品图片预览")}</div>
       </label>
-      <label class="check-row">
+      <label class="form-field-card check-row">
         <input name="favorite" type="checkbox" ${dish?.favorite ? "checked" : ""}>
         <span>加入我的收藏</span>
       </label>
@@ -838,9 +838,6 @@ function renderHome() {
       <div class="tag-row hero-open-target" role="button" tabindex="0" data-action="view-current-pick" data-id="${escapeAttr(pick?.id || "")}">
         ${renderTags(pick?.tags || ["凉爽的", "方便下饭"])}
       </div>
-
-      <div class="hero-divider"></div>
-
       <div class="hero-filter">
         <div class="section-heading">
           <h3>按心情挑标签</h3>
@@ -851,6 +848,7 @@ function renderHome() {
             <button class="tag-chip ${selectedTags.includes(tag) ? "is-selected" : ""}" type="button" data-action="toggle-home-tag" data-tag="${escapeAttr(tag)}">${escapeHtml(tag)}</button>
           `).join("")}
         </div>
+        ${selectedTags.length ? `<p class="hero-filter-summary">当前筛选：${selectedTags.map(escapeHtml).join("、")}</p>` : ""}
       </div>
 
       <div class="action-row">
@@ -930,7 +928,12 @@ function renderMy() {
       <p class="my-section-label">数据与统计</p>
       <article class="my-info-card">
         <span>📊 我的做饭小统计</span>
-        <small>已收录菜谱：${state.dishes.length} 道 ｜ 收藏：${favoriteCount} 道 ｜ 本周已排：${getPlannedMealCount()} 餐 ｜ 最常用标签：${escapeHtml(getMostUsedTag())}</small>
+        <div class="my-stat-grid">
+          <b>${state.dishes.length}<small>道菜</small></b>
+          <b>${favoriteCount}<small>收藏</small></b>
+          <b>${getPlannedMealCount()}<small>餐</small></b>
+        </div>
+        <small>最常用标签：${escapeHtml(getMostUsedTag())}</small>
       </article>
 
       <details class="my-panel-card">
@@ -1807,7 +1810,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw-dish-video-v1.js");
+    navigator.serviceWorker.register("./sw-ui-polish-v1.js");
   });
 }
 
