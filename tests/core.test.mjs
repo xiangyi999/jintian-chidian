@@ -30,6 +30,8 @@ import {
   setWeeklyMeal,
   pushCloudState,
   pullCloudState,
+  shouldApplyCloudState,
+  mergeCloudState,
   uploadDishImage,
   } from "../src/core.js";
 
@@ -475,4 +477,32 @@ test("pullCloudState reads the shared Supabase row", async () => {
 
   assert.equal(result.dishes[0].name, "云端菜");
   assert.equal(result.settings.theme, "cream-dessert");
+});
+
+test("startup cloud sync applies when cloud has dishes missing locally even if local has newer edits", () => {
+  const localDish = createDish({ id: "dish-local", name: "Local dish", favorite: true }, "2026-07-09T01:00:00.000Z");
+  const cloudDish = createDish({ id: "dish-cloud", name: "Cloud dish", image: "https://example.com/cloud.jpg" }, "2026-07-07T03:00:00.000Z");
+  const cloudPlan = setWeeklyMeal(createEmptyWeeklyPlan(new Date("2026-07-09T12:00:00+08:00")), "mon", "lunch", "dish-cloud");
+
+  const cloudState = {
+    syncedAt: "2026-07-07T04:00:00.000Z",
+    dishes: [localDish, cloudDish],
+    weeklyPlan: cloudPlan,
+    shoppingState: createEmptyShoppingState(),
+  };
+
+  assert.equal(shouldApplyCloudState({ dishes: [localDish], weeklyPlan: createEmptyWeeklyPlan() }, cloudState), true);
+
+  const merged = mergeCloudState({
+    localState: {
+      dishes: [localDish],
+      weeklyPlan: createEmptyWeeklyPlan(new Date("2026-07-09T12:00:00+08:00")),
+      shoppingState: createEmptyShoppingState(),
+    },
+    cloudState,
+  });
+
+  assert.deepEqual(merged.dishes.map((dish) => dish.id).sort(), ["dish-cloud", "dish-local"]);
+  assert.equal(merged.weeklyPlan.slots.mon.lunch, "dish-cloud");
+  assert.equal(merged.dishes.find((dish) => dish.id === "dish-local").favorite, true);
 });

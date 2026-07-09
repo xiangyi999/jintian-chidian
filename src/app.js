@@ -13,6 +13,7 @@ import {
   friendlyUploadError,
   getAllTags,
   hasCloudConfig,
+  mergeCloudState,
   normalizeSettings,
   normalizeShoppingState,
   normalizeWeeklyPlan,
@@ -24,9 +25,10 @@ import {
   pushCloudState,
   requestAiRecipe,
   setWeeklyMeal,
+  shouldApplyCloudState,
   updateDish,
   uploadDishImage,
-} from "./core.js?v=20260706-v1";
+} from "./core.js?v=20260709-v1";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 const IMAGE_MAX_EDGE = 900;
@@ -1764,13 +1766,6 @@ async function pullCloudNow() {
   }
 }
 
-function latestDishTimestamp(dishes = []) {
-  return dishes.reduce((latest, dish) => {
-    const updatedAt = Date.parse(dish.updatedAt || dish.createdAt || "");
-    return Number.isFinite(updatedAt) ? Math.max(latest, updatedAt) : latest;
-  }, 0);
-}
-
 async function pullCloudOnStartup() {
   if (!state.settings.cloudSyncEnabled || !hasCloudConfig(state.settings)) {
     return;
@@ -1782,15 +1777,14 @@ async function pullCloudOnStartup() {
       return;
     }
 
-    const cloudSyncedAt = Date.parse(cloudState.syncedAt || "");
-    const localLatest = latestDishTimestamp(state.dishes);
-    if (Number.isFinite(cloudSyncedAt) && localLatest > cloudSyncedAt) {
+    if (!shouldApplyCloudState(state, cloudState)) {
       return;
     }
 
-    state.dishes = cloudState.dishes;
-    state.weeklyPlan = normalizeWeeklyPlan(cloudState.weeklyPlan);
-    state.shoppingState = normalizeShoppingState(cloudState.shoppingState);
+    const mergedState = mergeCloudState({ localState: state, cloudState });
+    state.dishes = mergedState.dishes;
+    state.weeklyPlan = normalizeWeeklyPlan(mergedState.weeklyPlan);
+    state.shoppingState = normalizeShoppingState(mergedState.shoppingState);
     state.settings = {
       ...state.settings,
       ...cloudState.settings,
@@ -1810,7 +1804,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw-ui-polish-v1.js");
+    navigator.serviceWorker.register("./sw-cloud-merge-v1.js");
   });
 }
 

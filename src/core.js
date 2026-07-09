@@ -629,6 +629,136 @@ export function buildCloudPayload({ dishes = [], settings = {}, weeklyPlan, shop
   };
 }
 
+function dishTimestamp(dish = {}) {
+  const updatedAt = Date.parse(dish.updatedAt || dish.createdAt || "");
+  return Number.isFinite(updatedAt) ? updatedAt : 0;
+}
+
+function latestDishTimestamp(dishes = []) {
+  return dishes.reduce((latest, dish) => Math.max(latest, dishTimestamp(dish)), 0);
+}
+
+function weeklyPlanHasCloudFill(localPlan = {}, cloudPlan = {}, localDishIds = new Set()) {
+  const local = normalizeWeeklyPlan(localPlan);
+  const cloud = normalizeWeeklyPlan(cloudPlan);
+
+  for (const day of WEEK_DAYS) {
+    for (const meal of MEAL_KEYS) {
+      const localId = local.slots[day][meal];
+      const cloudId = cloud.slots[day][meal];
+      if (cloudId && (!localId || !localDishIds.has(cloudId))) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+export function shouldApplyCloudState(localState = {}, cloudState = {}) {
+  if (!cloudState) {
+    return false;
+  }
+
+  const localDishes = Array.isArray(localState.dishes) ? localState.dishes : [];
+  const cloudDishes = Array.isArray(cloudState.dishes) ? cloudState.dishes : [];
+  const localById = new Map(localDishes.map((dish) => [dish.id, dish]));
+  const localIds = new Set(localById.keys());
+  const cloudSyncedAt = Date.parse(cloudState.syncedAt || "");
+
+  if (cloudDishes.some((dish) => dish.id && !localById.has(dish.id))) {
+    return true;
+  }
+
+  if (cloudDishes.some((dish) => {
+    const localDish = localById.get(dish.id);
+    return localDish && dish.image && !localDish.image;
+  })) {
+    return true;
+  }
+
+  if (weeklyPlanHasCloudFill(localState.weeklyPlan, cloudState.weeklyPlan, localIds)) {
+    return true;
+  }
+
+  return Number.isFinite(cloudSyncedAt) && cloudSyncedAt >= latestDishTimestamp(localDishes);
+}
+
+function mergeDishes(localDishes = [], cloudDishes = []) {
+  const mergedById = new Map();
+  for (const dish of cloudDishes) {
+    if (dish?.id) {
+      mergedById.set(dish.id, dish);
+    }
+  }
+
+  for (const localDish of localDishes) {
+    if (!localDish?.id) continue;
+    const cloudDish = mergedById.get(localDish.id);
+    if (!cloudDish) {
+      mergedById.set(localDish.id, localDish);
+      continue;
+    }
+
+    const preferLocal = dishTimestamp(localDish) > dishTimestamp(cloudDish);
+    mergedById.set(localDish.id, {
+      ...(preferLocal ? cloudDish : localDish),
+      ...(preferLocal ? localDish : cloudDish),
+      image: localDish.image || cloudDish.image || "",
+      imagePath: localDish.imagePath || cloudDish.imagePath || "",
+    });
+  }
+
+  return [...mergedById.values()];
+}
+
+function mergeWeeklyPlan(localPlan = {}, cloudPlan = {}, mergedDishIds = new Set()) {
+  const local = normalizeWeeklyPlan(localPlan);
+  const cloud = normalizeWeeklyPlan(cloudPlan);
+  let merged = local;
+
+  for (const day of WEEK_DAYS) {
+    for (const meal of MEAL_KEYS) {
+      const localId = merged.slots[day][meal];
+      const cloudId = cloud.slots[day][meal];
+      if (cloudId && (!localId || !mergedDishIds.has(localId))) {
+        merged = setWeeklyMeal(merged, day, meal, cloudId);
+      }
+    }
+  }
+
+  return merged;
+}
+
+function mergeShoppingState(localShoppingState = {}, cloudShoppingState = {}) {
+  const local = normalizeShoppingState(localShoppingState);
+  const cloud = normalizeShoppingState(cloudShoppingState);
+  const customById = new Map();
+  for (const item of cloud.customItems) {
+    customById.set(item.id, item);
+  }
+  for (const item of local.customItems) {
+    customById.set(item.id, item);
+  }
+
+  return normalizeShoppingState({
+    checked: { ...cloud.checked, ...local.checked },
+    overrides: { ...cloud.overrides, ...local.overrides },
+    customItems: [...customById.values()],
+  });
+}
+
+export function mergeCloudState({ localState = {}, cloudState = {} } = {}) {
+  const dishes = mergeDishes(localState.dishes || [], cloudState.dishes || []);
+  const dishIds = new Set(dishes.map((dish) => dish.id));
+
+  return {
+    dishes,
+    weeklyPlan: mergeWeeklyPlan(localState.weeklyPlan, cloudState.weeklyPlan, dishIds),
+    shoppingState: mergeShoppingState(localState.shoppingState, cloudState.shoppingState),
+  };
+}
+
 function normalizeCloudUrl(url) {
   return String(url || "").trim().replace(/\/+$/, "");
 }
