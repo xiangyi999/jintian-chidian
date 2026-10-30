@@ -9,6 +9,7 @@ import {
   createEmptyShoppingState,
   createEmptyWeeklyPlan,
   filterDishes,
+  friendlyCloudError,
   friendlyErrorMessage,
   friendlyUploadError,
   getAllTags,
@@ -28,7 +29,7 @@ import {
   shouldApplyCloudState,
   updateDish,
   uploadDishImage,
-} from "./core.js?v=20260709-v1";
+} from "./core.js?v=20261030-v1";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 const IMAGE_MAX_EDGE = 900;
@@ -1745,9 +1746,10 @@ async function pullCloudNow() {
       return;
     }
 
-    state.dishes = cloudState.dishes;
-    state.weeklyPlan = normalizeWeeklyPlan(cloudState.weeklyPlan);
-    state.shoppingState = normalizeShoppingState(cloudState.shoppingState);
+    const mergedState = mergeCloudState({ localState: state, cloudState });
+    state.dishes = mergedState.dishes;
+    state.weeklyPlan = normalizeWeeklyPlan(mergedState.weeklyPlan);
+    state.shoppingState = normalizeShoppingState(mergedState.shoppingState);
     state.settings = {
       ...state.settings,
       ...cloudState.settings,
@@ -1762,7 +1764,7 @@ async function pullCloudNow() {
     showToast("已从云端更新本机菜谱。");
     render();
   } catch (error) {
-    showToast(error.message || "读取云端失败。");
+    showToast(friendlyCloudError(error));
   }
 }
 
@@ -1804,7 +1806,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw-cloud-merge-v1.js");
+    navigator.serviceWorker.register("./sw-cloud-error-v1.js");
   });
 }
 

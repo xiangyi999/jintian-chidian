@@ -30,6 +30,8 @@ import {
   setWeeklyMeal,
   pushCloudState,
   pullCloudState,
+  parseCloudResponse,
+  friendlyCloudError,
   shouldApplyCloudState,
   mergeCloudState,
   uploadDishImage,
@@ -470,13 +472,30 @@ test("pullCloudState reads the shared Supabase row", async () => {
       assert.equal(options.headers.Authorization, "Bearer anon");
       return {
         ok: true,
-        json: async () => [{ payload: { dishes: [dish], settings: { theme: "cream-dessert" } } }],
+        status: 200,
+        text: async () => JSON.stringify([{ payload: { dishes: [dish], settings: { theme: "cream-dessert" } } }]),
       };
     },
   });
 
   assert.equal(result.dishes[0].name, "云端菜");
   assert.equal(result.settings.theme, "cream-dessert");
+});
+
+test("cloud pull explains HTML and malformed responses in Chinese", async () => {
+  await assert.rejects(
+    parseCloudResponse({ ok: true, status: 200, text: async () => "<!doctype html><html>proxy error</html>" }),
+    /云端返回了网页而不是同步数据/
+  );
+  await assert.rejects(
+    parseCloudResponse({ ok: true, status: 200, text: async () => "{broken" }),
+    /云端数据暂时无法读取/
+  );
+  await assert.rejects(
+    parseCloudResponse({ ok: false, status: 401, text: async () => "Unauthorized" }),
+    /云端拒绝访问/
+  );
+  assert.equal(friendlyCloudError(new TypeError("Failed to fetch")), "无法连接云端，请检查手机网络后重试。");
 });
 
 test("startup cloud sync applies when cloud has dishes missing locally even if local has newer edits", () => {

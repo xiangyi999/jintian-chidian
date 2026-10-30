@@ -928,11 +928,7 @@ export async function pullCloudState({ settings = {}, fetchImpl = fetch } = {}) 
     },
   });
 
-  if (!response.ok) {
-    throw new Error("读取云端数据失败，请检查 Supabase 配置");
-  }
-
-  const rows = await response.json();
+  const rows = await parseCloudResponse(response);
   const payload = rows?.[0]?.payload;
   if (!payload) {
     return null;
@@ -953,4 +949,50 @@ export async function pullCloudState({ settings = {}, fetchImpl = fetch } = {}) 
       cloudAnonKey: "",
     },
   };
+}
+
+export async function parseCloudResponse(response) {
+  const status = Number(response?.status || 0);
+  if (!response?.ok) {
+    if (status === 401 || status === 403) {
+      throw new Error("云端拒绝访问，请检查 Supabase 密钥和数据权限设置。");
+    }
+    if (status === 404) {
+      throw new Error("找不到云端数据接口，请检查 Supabase 地址和 menu_sync 表。");
+    }
+    throw new Error("读取云端失败，服务暂时没有正常响应，请稍后重试。");
+  }
+
+  let body = "";
+  try {
+    body = await response.text();
+  } catch {
+    throw new Error("云端响应无法读取，请检查网络后重试。");
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    if (/^\s*<(?:!doctype\s+html|html|head|body)\b/i.test(body)) {
+      throw new Error("云端返回了网页而不是同步数据。可能是网络拦截或同步地址异常，请检查网络和云同步设置后重试。");
+    }
+    throw new Error("云端数据暂时无法读取，请稍后重试。");
+  }
+}
+
+export function friendlyCloudError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  if (message.includes("failed to fetch")
+    || message.includes("networkerror")
+    || message.includes("network request failed")
+    || message.includes("load failed")
+    || message.includes("ssl connection")) {
+    return "无法连接云端，请检查手机网络后重试。";
+  }
+  if (/^[\[{]/.test(String(error?.message || "")) || message.includes("unexpected token")) {
+    return "云端返回的数据格式不正确，请稍后重试；本机菜谱没有被覆盖。";
+  }
+  return error?.message && /[\u3400-\u9fff]/.test(error.message)
+    ? error.message
+    : "读取云端失败，请稍后重试；本机菜谱没有被覆盖。";
 }

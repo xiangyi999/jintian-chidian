@@ -19,6 +19,7 @@ const checkedFiles = [
   "sw-dish-video-v1.js",
   "sw-ui-polish-v1.js",
   "sw-cloud-merge-v1.js",
+  "sw-cloud-error-v1.js",
 ];
 
 const mojibakePattern = /浠|鑿|浜戠|绠€|銆|锛|�|閲嶆柊|闅忔満|杩斿洖|鍒楄〃|鍒犻櫎|鏍囩|缂栬緫|鍋氭硶|鍥剧墖/;
