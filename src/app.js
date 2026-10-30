@@ -29,7 +29,7 @@ import {
   shouldApplyCloudState,
   updateDish,
   uploadDishImage,
-} from "./core.js?v=20261030-v1";
+} from "./core.js?v=20261030-v2";
 
 const STORAGE_KEY = "jintian-chidian-state-v1";
 const IMAGE_MAX_EDGE = 900;
@@ -1806,7 +1806,7 @@ async function pullCloudOnStartup() {
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw-cloud-error-v1.js");
+    navigator.serviceWorker.register("./sw-publishable-key-v1.js");
   });
 }
 

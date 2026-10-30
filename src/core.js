@@ -66,6 +66,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function supabaseApiHeaders(apiKey, extraHeaders = {}) {
+  const headers = { ...extraHeaders, apikey: apiKey };
+  if (!/^sb_(?:publishable|secret)_/.test(String(apiKey || ""))) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  return headers;
+}
+
 function uniqueTags(tags = []) {
   return [...new Set(
     tags
@@ -863,13 +871,11 @@ export async function uploadDishImage({
   const baseUrl = normalizeCloudUrl(settings.cloudUrl);
   const response = await fetchImpl(`${baseUrl}/storage/v1/object/${bucket}/${encodeStoragePath(imagePath)}`, {
     method: "POST",
-    headers: {
-      apikey: settings.cloudAnonKey,
-      Authorization: `Bearer ${settings.cloudAnonKey}`,
+    headers: supabaseApiHeaders(settings.cloudAnonKey, {
       "Content-Type": mimeType,
       "cache-control": "31536000",
       "x-upsert": "true",
-    },
+    }),
     body: blob,
   });
 
@@ -897,12 +903,10 @@ export async function pushCloudState({ settings = {}, dishes = [], weeklyPlan, s
 
   const response = await fetchImpl(`${baseUrl}/rest/v1/menu_sync?on_conflict=id`, {
     method: "POST",
-    headers: {
+    headers: supabaseApiHeaders(settings.cloudAnonKey, {
       "Content-Type": "application/json",
-      apikey: settings.cloudAnonKey,
-      Authorization: `Bearer ${settings.cloudAnonKey}`,
       Prefer: "resolution=merge-duplicates,return=minimal",
-    },
+    }),
     body: JSON.stringify(row),
   });
 
@@ -922,10 +926,7 @@ export async function pullCloudState({ settings = {}, fetchImpl = fetch } = {}) 
   const space = encodeFilterValue(settings.syncSpace);
   const response = await fetchImpl(`${baseUrl}/rest/v1/menu_sync?id=eq.${space}&select=payload,updated_at&limit=1`, {
     method: "GET",
-    headers: {
-      apikey: settings.cloudAnonKey,
-      Authorization: `Bearer ${settings.cloudAnonKey}`,
-    },
+    headers: supabaseApiHeaders(settings.cloudAnonKey),
   });
 
   const rows = await parseCloudResponse(response);

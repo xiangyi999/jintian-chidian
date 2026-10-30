@@ -94,6 +94,7 @@ test("uploadDishImage uploads data URL images and returns the public URL", async
   );
   assert.equal(calls[0].options.method, "POST");
   assert.equal(calls[0].options.headers["Content-Type"], "image/jpeg");
+  assert.equal(calls[0].options.headers.Authorization, undefined);
   assert.equal(calls[0].options.headers["x-upsert"], "true");
   assert.equal(result.imagePath, "home-menu-2026/dish-1-20260703T040506789Z.jpg");
   assert.equal(isCloudImageUrl(result.image), true);
@@ -452,11 +453,44 @@ test("pushCloudState upserts one shared Supabase row", async () => {
   assert.equal(calls[0].url, "https://demo.supabase.co/rest/v1/menu_sync?on_conflict=id");
   assert.equal(calls[0].options.method, "POST");
   assert.equal(calls[0].options.headers.apikey, "anon");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer anon");
   assert.match(calls[0].options.headers.Prefer, /resolution=merge-duplicates/);
   const body = JSON.parse(calls[0].options.body);
   assert.equal(body.id, "home-menu");
   assert.equal(body.payload.dishes.length, 1);
   assert.equal(body.payload.settings.cloudAnonKey, "");
+});
+
+test("publishable Supabase keys are sent only through the apikey header", async () => {
+  const headers = [];
+  await pushCloudState({
+    settings: {
+      cloudUrl: "https://demo.supabase.co",
+      cloudAnonKey: "sb_publishable_test",
+      syncSpace: "home-menu",
+    },
+    fetchImpl: async (_url, options) => {
+      headers.push(options.headers);
+      return { ok: true };
+    },
+  });
+  await pullCloudState({
+    settings: {
+      cloudUrl: "https://demo.supabase.co",
+      cloudAnonKey: "sb_publishable_test",
+      syncSpace: "home-menu",
+    },
+    fetchImpl: async (_url, options) => {
+      headers.push(options.headers);
+      return { ok: true, status: 200, text: async () => "[]" };
+    },
+  });
+
+  assert.equal(headers.length, 2);
+  for (const requestHeaders of headers) {
+    assert.equal(requestHeaders.apikey, "sb_publishable_test");
+    assert.equal(requestHeaders.Authorization, undefined);
+  }
 });
 
 test("pullCloudState reads the shared Supabase row", async () => {
